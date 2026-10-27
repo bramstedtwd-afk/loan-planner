@@ -175,6 +175,8 @@ conflictEl.addEventListener('click', async e => {
   toast(b.dataset.resolve === 'theirs' ? 'Loaded the latest version from GitHub' : 'Saved this device’s version to GitHub');
 });
 
+if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+
 view.innerHTML = '<section class="card glass empty"><h2>Opening your planner…</h2></section>';
 const SQL = await initSqlJs({ locateFile: f => SQL_CDN + f });
 const remote = state.config.token ? new GitHubFile(state.config) : null;

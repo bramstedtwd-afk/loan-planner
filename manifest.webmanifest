@@ -1,0 +1,15 @@
+{
+  "name": "Loan Payoff",
+  "short_name": "Loan Payoff",
+  "description": "Your student loan plan: debt-free date, what to pay this month, and the fastest ways to cut interest.",
+  "start_url": "./#today",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#edf3f0",
+  "theme_color": "#0c3a2e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
