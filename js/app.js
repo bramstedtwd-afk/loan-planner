@@ -1,68 +1,152 @@
-// App shell: loads data, runs the engine, routes between screens.
+// App shell: opens planner.sqlite (synced with the private data repo), runs the engine, routes between screens.
 import { nowYM, migratePlan, simulate, interestMoves, applyMove, STRATEGIES } from './engine.js';
-import { esc } from './format.js';
-import { loadLocal, saveLocal } from './store/local.js';
+import { esc, ago, money, todayISO } from './format.js';
+import { GitHubFile } from './store/github.js';
+import { Sync, STATUS } from './store/sync.js';
+import { exportBytes } from './store/db.js';
+import { loadLocal } from './store/local.js';
 import { renderToday } from './screens/today.js';
+import { renderSettings } from './screens/settings.js';
+import { renderHistory } from './screens/history.js';
+import { openLogPayment } from './ui/log-payment.js';
+
+const SQL_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/';
+const CONFIG_KEY = 'loanPayoff.github.v1', DB_KEY = 'loanPayoff.db.v1';
+const DEFAULT_CONFIG = { owner: 'bramstedtwd-afk', repo: 'loan-data', path: 'planner.sqlite', token: '' };
 
 const view = document.getElementById('view');
 const toastEl = document.querySelector('.toast');
+const conflictEl = document.querySelector('[data-conflict]');
 const start = nowYM();
-const state = { data: null, source: 'none', screen: null };
+const state = { data: null, screen: null, config: loadConfig(), sync: null };
 
-const SYNC = {
-  dev: ['Local test data', 'local'],
-  browser: ['Saved in this browser', 'local'],
-  none: ['No data yet', 'local'],
+function loadConfig() { try { return { ...DEFAULT_CONFIG, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}') }; } catch { return { ...DEFAULT_CONFIG }; } }
+function saveConfig(c) { try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {} }
+const cache = {
+  get() { try { return JSON.parse(localStorage.getItem(DB_KEY) || 'null'); } catch { return null; } },
+  set(v) { try { localStorage.setItem(DB_KEY, JSON.stringify(v)); } catch { toast('This browser is out of storage, so offline changes can’t be kept.'); } },
 };
 
+/* ---------- data ---------- */
 function normalize(d) {
   const loans = [...(d.loans || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(b.name));
   return { loans, payments: d.payments || [], scenarios: d.scenarios || [], plan: migratePlan(d.plan || {}) };
+}
+const reloadData = () => { state.data = normalize(state.sync.data()); };
+
+// The one way the app changes data: commit it (to the device now, to GitHub on the next pause) and offer Undo.
+function save(next, message, toastMsg = message) {
+  const prev = state.data;
+  state.data = normalize(next);
+  state.sync.commit(state.data, message);
+  render();
+  toast(toastMsg, () => { state.data = prev; state.sync.commit(prev, `Undid: ${message}`); render(); });
 }
 
 function compute() {
   const { loans, plan } = state.data;
   const st = STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
-  plan.strategy = st;
   return {
-    results: { [st]: simulate(loans, plan, st, { start }), minimum: simulate(loans, plan, 'minimum', { start }) },
+    results: { [st]: simulate(loans, { ...plan, strategy: st }, st, { start }), minimum: simulate(loans, plan, 'minimum', { start }) },
     moves: interestMoves(loans, plan, st, { start }),
-    strategyName: STRATEGIES.find(s => s.id === st).name,
+    strategyName: STRATEGIES.find(s => s.id === st).name, strategy: st,
   };
 }
-
 const colorOf = id => { const i = state.data.loans.findIndex(l => l.id === id); return i >= 0 && i < 8 ? `var(--s${i + 1})` : 'var(--s-other)'; };
+const plannedThisMonth = () => { const c = compute(); return c.results[c.strategy].rows[0]?.pay || {}; };
 
+/* ---------- sync status ---------- */
+function syncInfo() {
+  const s = state.sync;
+  if (!s) return ['Loading…', 'pending'];
+  switch (s.status) {
+    case STATUS.SAVED: return [`Saved to GitHub · ${ago(s.savedAt)}`, ''];
+    case STATUS.SAVING: return ['Saving…', 'saving'];
+    case STATUS.PENDING: return ['Saving soon…', 'pending'];
+    case STATUS.OFFLINE: return ['Offline · will save later', 'warn'];
+    case STATUS.LOCAL: return ['Only on this device', 'warn'];
+    case STATUS.CONFLICT: return ['Changed on another device', 'crit'];
+    case STATUS.ERROR: return [s.error?.code === 'auth' ? 'Key not accepted · fix in Settings' : 'Couldn’t save · tap for details', 'crit'];
+    default: return ['Loading…', 'pending'];
+  }
+}
+function paintSync() {
+  const [text, cls] = syncInfo();
+  document.querySelectorAll('[data-sync]').forEach(el => { el.classList.remove('saving', 'pending', 'warn', 'crit'); if (cls) el.classList.add(cls); el.querySelector('[data-sync-text]').textContent = text; });
+  conflictEl.hidden = state.sync?.status !== STATUS.CONFLICT;
+}
+setInterval(paintSync, 30000); // keep "x min ago" fresh
+
+/* ---------- toast ---------- */
 let toastTimer;
 function toast(msg, undo) {
   toastEl.innerHTML = `<span>${esc(msg)}</span>${undo ? '<button type="button">Undo</button>' : ''}`;
   toastEl.hidden = false;
-  if (undo) toastEl.querySelector('button').onclick = () => { undo(); toastEl.hidden = true; };
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, 5000);
+  if (undo) toastEl.querySelector('button').onclick = () => { toastEl.hidden = true; undo(); };
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, 6000);
 }
 
-function setPlan(plan) { state.data.plan = plan; saveLocal(state.data); state.source = 'browser'; render(); }
+/* ---------- actions ---------- */
+const logPayment = () => {
+  if (!state.data.loans.length) { toast('Add your loans first.'); return; }
+  openLogPayment({ data: state.data, planned: plannedThisMonth(), onSave: (next, message, msg) => save(next, message, msg) });
+};
 
+function removePayment(p) {
+  const next = JSON.parse(JSON.stringify(state.data));
+  next.payments = next.payments.filter(x => x.id !== p.id);
+  next.loans = next.loans.map(l => l.id !== p.loanId ? l : { ...l, balance: Math.round(((+l.balance || 0) + (+p.principal || 0)) * 100) / 100, unpaid: Math.round(((+l.unpaid || 0) + (+p.interest || 0)) * 100) / 100 });
+  save(next, `Removed ${money(p.amount, true)} payment from ${p.date}`, 'Payment removed');
+}
+
+async function connect(cfg) {
+  const remote = new GitHubFile(cfg);
+  await remote.check();
+  state.config = cfg; saveConfig(cfg);
+  state.sync.remote = remote;
+  await state.sync.start();
+  reloadData(); location.hash = '#today'; render();
+  toast(state.sync.status === STATUS.SAVED ? `Connected to ${cfg.owner}/${cfg.repo}` : syncInfo()[0]);
+}
+
+function download(name, bytes, type) {
+  const url = URL.createObjectURL(new Blob([bytes], { type }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/* ---------- screens ---------- */
 const SCREENS = {
   today: { title: 'Today', render: v => {
-    if (!state.data?.loans.length) return emptyState(v);
+    if (!state.data.loans.length) return emptyState(v);
+    const c = compute();
     return renderToday(v, {
-      data: state.data, start, colorOf, ...compute(),
-      syncLabel: SYNC[state.source][0], syncClass: SYNC[state.source][1],
-      onApplyMove: m => { const prev = state.data.plan; setPlan(applyMove(prev, m.apply, { start })); toast(`${m.title} applied`, () => setPlan(prev)); },
-      onLogPayment: () => toast('Payment logging arrives with GitHub sync, the next step.'),
+      data: state.data, start, colorOf, ...c, syncLabel: syncInfo()[0],
+      onApplyMove: m => save({ ...state.data, plan: applyMove(state.data.plan, m.apply, { start }) }, `Applied: ${m.title}`, `${m.title} applied`),
+      onLogPayment: logPayment,
     });
   } },
-  plan: { title: 'Plan' }, money: { title: 'Money' }, loans: { title: 'Loans' }, history: { title: 'History' },
+  history: { title: 'History', render: v => renderHistory(v, { data: state.data, colorOf, onLogPayment: logPayment, onRemovePayment: removePayment }) },
+  settings: { title: 'Settings', render: v => renderSettings(v, {
+    config: state.config, sync: state.sync, onConnect: connect,
+    onSyncNow: async () => { await state.sync.retry(); reloadData(); render(); },
+    onForget: () => { const c = { ...state.config, token: '' }; state.config = c; saveConfig(c); state.sync.remote = null; state.sync.set(STATUS.LOCAL); render(); toast('Key removed from this device'); },
+    onDownloadDb: () => download(`planner-${todayISO()}.sqlite`, exportBytes(state.sync.db), 'application/vnd.sqlite3'),
+    onExportJson: () => download(`planner-${todayISO()}.json`, JSON.stringify({ app: 'loan-payoff', exportedAt: new Date().toISOString(), ...state.data }, null, 2), 'application/json'),
+  }) },
+  plan: { title: 'Plan' }, money: { title: 'Money' }, loans: { title: 'Loans' },
 };
 
 function emptyState(v) {
-  v.innerHTML = `<header class="topbar"><div><h1>Today</h1></div></header>
-    <section class="card glass empty"><h2>Your plan starts here</h2><p>Once your private data repo is connected, your loans, earnings and payments load here.</p></section>`;
+  const connected = !!state.config.token;
+  v.innerHTML = `<header class="topbar"><div><h1>Today</h1></div><a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text></span></a></header>
+    <section class="card glass empty rise"><h2>${connected ? 'No loans in your planner yet' : 'Connect your planner'}</h2>
+      <p>${connected ? 'Your data repo is connected but has no loans yet.' : 'Your loans, earnings and payments live in your private GitHub repo. Add your access key to load them on this device.'}</p>
+      ${connected ? '' : '<a class="btn primary" href="#settings">Connect GitHub</a>'}</section>`;
 }
 
 function placeholder(v, title) {
-  v.innerHTML = `<header class="topbar"><div><h1>${esc(title)}</h1></div></header>
+  v.innerHTML = `<header class="topbar"><div><h1>${esc(title)}</h1></div><a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text></span></a></header>
     <section class="card glass empty"><h2>${esc(title)} is being rebuilt</h2><p>This screen moves over from your current planner in the next steps. Until then, use the planner artifact for it.</p><a class="btn soft" href="#today">Back to Today</a></section>`;
 }
 
@@ -74,16 +158,31 @@ function render() {
     if (a.getAttribute('href') === `#${key}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   document.title = `${scr.title} · Loan Payoff`;
-  document.querySelector('[data-sync-text]').textContent = SYNC[state.source][0];
-  document.querySelector('[data-sync]').className = `sync ${SYNC[state.source][1]}`;
   state.screen = scr.render ? scr.render(view) : placeholder(view, scr.title);
+  paintSync();
 }
 
+/* ---------- boot ---------- */
 addEventListener('hashchange', () => { render(); scrollTo(0, 0); });
 let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => state.screen?.redraw?.(), 120); });
-document.querySelector('[data-quick]').addEventListener('click', () => toast('Quick add (payments, income, costs) arrives with GitHub sync.'));
+addEventListener('online', async () => { await state.sync?.retry(); reloadData(); render(); });
+document.querySelector('[data-quick]').addEventListener('click', logPayment);
+conflictEl.addEventListener('click', async e => {
+  const b = e.target.closest('[data-resolve]'); if (!b) return;
+  await state.sync.resolve(b.dataset.resolve); reloadData(); render();
+  toast(b.dataset.resolve === 'theirs' ? 'Loaded the latest version from GitHub' : 'Saved this device’s version to GitHub');
+});
 
-const { data, source } = await loadLocal();
-state.data = data ? normalize(data) : { loans: [], payments: [], scenarios: [], plan: migratePlan({}) };
-state.source = source;
+view.innerHTML = '<section class="card glass empty"><h2>Opening your planner…</h2></section>';
+const SQL = await initSqlJs({ locateFile: f => SQL_CDN + f });
+const remote = state.config.token ? new GitHubFile(state.config) : null;
+state.sync = new Sync({ SQL, remote, cache, onChange: () => paintSync() });
+await state.sync.start();
+state.data = normalize(state.sync.data());
+
+// Development only: with nothing saved and no repo connected, start from a git-ignored local-data.json if one exists.
+if (!state.data.loans.length && !remote) {
+  const { data } = await loadLocal();
+  if (data?.loans?.length) { state.data = normalize(data); state.sync.commit(state.data, 'Imported from local file'); }
+}
 render();

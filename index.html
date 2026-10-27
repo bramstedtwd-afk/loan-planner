@@ -22,6 +22,7 @@
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
 </svg>
 
 <div class="app">
@@ -33,10 +34,18 @@
     <a class="nav" href="#loans"><svg class="i"><use href="#i-loans"/></svg>Loans</a>
     <a class="nav" href="#history"><svg class="i"><use href="#i-history"/></svg>History</a>
     <div class="grow"></div>
-    <span class="sync" data-sync><span class="dot"></span><span data-sync-text>Loading…</span></span>
+    <a class="nav" href="#settings"><svg class="i"><use href="#i-gear"/></svg>Settings</a>
+    <a class="sync" href="#settings" data-sync><span class="dot"></span><span data-sync-text>Loading…</span></a>
   </nav>
 
-  <main id="view" aria-live="polite"></main>
+  <main>
+    <div class="banner glass crit" data-conflict hidden>
+      <p>Your planner changed on another device since this one loaded it.</p>
+      <button class="btn soft" type="button" data-resolve="theirs">Use the latest</button>
+      <button class="btn soft" type="button" data-resolve="mine">Keep this device’s version</button>
+    </div>
+    <div id="view" style="display:contents"></div>
+  </main>
 
   <nav class="tabbar glass" aria-label="Main">
     <a href="#today"><svg class="i"><use href="#i-home"/></svg>Today</a>
@@ -48,6 +57,7 @@
 </div>
 
 <div class="toast glass" role="status" hidden></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

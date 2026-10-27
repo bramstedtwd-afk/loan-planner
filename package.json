@@ -5,5 +5,8 @@
   "description": "Student loan payoff planner. Static app, no build step.",
   "scripts": {
     "test": "node tests/run-node.mjs"
+  },
+  "devDependencies": {
+    "sql.js": "1.10.3"
   }
 }

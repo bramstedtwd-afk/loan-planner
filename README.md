@@ -19,6 +19,12 @@ This repo holds **app code only**. Personal data lives in a separate private rep
 
 No build step: the files are served as-is.
 
+## Where data lives
+
+- `planner.sqlite` in a **private** repo, opened in the browser with [sql.js](https://sql.js.org/) (`js/store/db.js`). The schema is versioned; older files upgrade on open.
+- The app reads and commits that file through GitHub's contents API with a fine-grained token limited to that one repo (`js/store/github.js`). The token stays in the browser that entered it.
+- `js/store/sync.js` keeps a copy on the device, batches edits into one commit per pause, and never overwrites a newer version saved from another device. It asks which version to keep instead.
+
 ## Tests
 
 - **In a browser:** serve the folder (for example `python -m http.server`) and open `/tests/`.

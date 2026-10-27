@@ -102,7 +102,7 @@ export function renderToday(view, ctx) {
     </section>`;
 
   view.innerHTML = `
-    <header class="topbar"><div><div class="date">${today}</div><h1>Today</h1></div><span class="sync glass ${ctx.syncClass}"><span class="dot"></span>${esc(syncLabel)}</span></header>
+    <header class="topbar"><div><div class="date">${today}</div><h1>Today</h1></div><a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text>${esc(syncLabel)}</span></a></header>
     ${hero}
     <div class="board">
       <div class="col">${thisMonth}

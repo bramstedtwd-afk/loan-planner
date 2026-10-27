@@ -142,6 +142,63 @@ main { padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inse
 
 .board, .col { display: grid; gap: 14px; min-width: 0; }
 
+/* sync pill states */
+a.sync { text-decoration: none; }
+.sync.saving .dot, .sync.pending .dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.sync.warn .dot { background: var(--warn); box-shadow: 0 0 0 3px rgb(234 170 60 / 0.2); }
+.sync.crit .dot { background: var(--crit); box-shadow: 0 0 0 3px rgb(198 60 54 / 0.18); }
+@keyframes pulse { 50% { opacity: .35; } }
+.icon-btn { width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center; color: var(--ink-2); }
+
+/* banner */
+.banner { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 14px 16px; border-radius: var(--r-md); }
+.banner.crit { border-color: rgb(198 60 54 / 0.35); }
+.banner p { margin: 0; flex: 1 1 260px; font-weight: 500; }
+.banner .btn { height: 38px; font-size: 14px; }
+
+/* forms */
+.form { display: grid; gap: 14px; }
+.form h2 { margin: 0 0 2px; font-size: 22px; letter-spacing: -0.03em; }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field > span { font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.field em { font-style: normal; font-weight: 500; color: var(--ink-3); }
+.field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.field input, .field select { font: inherit; color: var(--ink); height: 46px; padding: 0 14px; border-radius: 14px; border: 1px solid var(--hairline); background: var(--glass-strong); box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.04); min-width: 0; width: 100%; }
+.field input:focus, .field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.split { margin: 0; font-size: 14px; color: var(--ink-2); min-height: 20px; }
+.split b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.err { margin: 0; color: var(--crit); font-size: 14px; font-weight: 500; }
+.sheet-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+.btn.danger, .link.danger { color: var(--crit); }
+.link { font-size: 12.5px; font-weight: 600; padding: 2px 0; }
+.btn:disabled { opacity: .6; cursor: progress; }
+.help { margin-top: 16px; font-size: 14px; color: var(--ink-2); }
+.help summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.help ol { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+.help a { color: var(--accent); font-weight: 600; }
+.totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.totals span { display: block; font-size: 12px; color: var(--ink-3); font-weight: 500; }
+.totals b { font-size: clamp(16px, 4.6vw, 22px); font-weight: 700; }
+
+/* sheet */
+.sheet-wrap { position: fixed; inset: 0; z-index: 30; display: grid; align-items: end; justify-items: center; }
+.sheet-backdrop { position: absolute; inset: 0; background: rgb(4 20 14 / 0.38); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.sheet { position: relative; width: min(560px, 100%); max-height: calc(100vh - 40px); overflow: auto; border-radius: 28px 28px 0 0; padding: 10px 20px calc(22px + env(safe-area-inset-bottom)); background: var(--glass-strong); }
+.sheet .grab { width: 40px; height: 5px; border-radius: 99px; background: var(--hairline); margin: 2px auto 14px; }
+@media (prefers-reduced-motion: no-preference) {
+  .sheet { animation: sheet-up .28s cubic-bezier(.2,.8,.2,1); }
+  .sheet-backdrop { animation: fade .2s ease; }
+  .sheet-wrap.out .sheet { transform: translateY(24px); opacity: 0; transition: all .18s; }
+  .sheet-wrap.out .sheet-backdrop { opacity: 0; transition: opacity .18s; }
+  @keyframes sheet-up { from { transform: translateY(40px); } }
+  @keyframes fade { from { opacity: 0; } }
+}
+@media (min-width: 900px) {
+  .sheet-wrap { align-items: center; }
+  .sheet { border-radius: 28px; padding: 24px; }
+  .sheet .grab { display: none; }
+}
+
 @media (min-width: 900px) {
   .app { grid-template-columns: 248px minmax(0, 1fr); }
   .side { display: flex; flex-direction: column; gap: 6px; position: sticky; top: 16px; height: calc(100vh - 32px); margin: 16px 0 16px 16px; padding: 18px 12px; }
