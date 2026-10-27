@@ -25,6 +25,20 @@ const conflictEl = document.querySelector('[data-conflict]');
 const start = nowYM();
 const state = { data: null, screen: null, config: loadConfig(), sync: null };
 
+// Monthly check-in snapshots live in snapshots.json next to planner.sqlite (written by the check-in workflow, read-only here).
+const checkins = { status: 'idle', snapshots: [], issuesUrl: '' };
+async function loadCheckins() {
+  if (!state.config.token || checkins.status === 'loading' || checkins.status === 'ready') return;
+  const { owner, repo } = state.config;
+  checkins.status = 'loading'; checkins.issuesUrl = `https://github.com/${owner}/${repo}/issues?q=label%3Acheck-in`;
+  try {
+    const f = await new GitHubFile({ ...state.config, path: 'snapshots.json' }).load();
+    checkins.snapshots = f ? (JSON.parse(new TextDecoder().decode(f.bytes)).snapshots || []) : [];
+    checkins.status = 'ready';
+  } catch { checkins.status = 'error'; }
+  if (location.hash === '#history') render();
+}
+
 function loadConfig() { try { return { ...DEFAULT_CONFIG, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}') }; } catch { return { ...DEFAULT_CONFIG }; } }
 function saveConfig(c) { try { localStorage.setItem(CONFIG_KEY, JSON.stringify(c)); } catch {} }
 const cache = {
@@ -107,7 +121,7 @@ function removePayment(p) {
 async function connect(cfg) {
   const remote = new GitHubFile(cfg);
   await remote.check();
-  state.config = cfg; saveConfig(cfg);
+  state.config = cfg; saveConfig(cfg); checkins.status = 'idle';
   state.sync.remote = remote;
   await state.sync.start();
   reloadData(); location.hash = '#today'; render();
@@ -131,7 +145,10 @@ const SCREENS = {
       onLogPayment: logPayment,
     });
   } },
-  history: { title: 'History', render: v => renderHistory(v, { data: state.data, colorOf, onLogPayment: logPayment, onRemovePayment: removePayment }) },
+  history: { title: 'History', render: v => {
+    if (state.config.token && (checkins.status === 'idle' || checkins.status === 'error')) loadCheckins();
+    return renderHistory(v, { data: state.data, colorOf, onLogPayment: logPayment, onRemovePayment: removePayment, checkins: state.config.token ? checkins : { status: 'off' } });
+  } },
   settings: { title: 'Settings', render: v => renderSettings(v, {
     config: state.config, sync: state.sync, onConnect: connect,
     onSyncNow: async () => { await state.sync.retry(); reloadData(); render(); },

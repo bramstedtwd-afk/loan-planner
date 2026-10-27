@@ -22,6 +22,7 @@
   globalThis.__SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}` });
   await import('./engine.test.js');
   await import('./store.test.js');
+  await import('./report.test.js');
   const results = await run();
   const failed = results.filter(r => !r.pass).length;
   document.getElementById('out').innerHTML = results.map(r => `<li class="${r.pass ? 'pass' : 'fail'}">${r.name}${r.pass ? '' : `<small>${r.error}</small>`}</li>`).join('');

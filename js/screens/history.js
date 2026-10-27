@@ -1,5 +1,20 @@
-// History: every logged payment, newest first, grouped by month.
+// History: monthly check-ins (from the check-in workflow), then every logged payment, newest first, grouped by month.
 import { money, esc } from '../format.js';
+import { ym, ymLabel } from '../engine.js';
+
+function checkinsCard({ checkins }) {
+  if (!checkins || checkins.status === 'off') return '';
+  const head = `<div class="card-h"><h2>Monthly check-ins</h2>${checkins.issuesUrl ? `<a class="more" href="${esc(checkins.issuesUrl)}" target="_blank" rel="noopener">On GitHub</a>` : ''}</div>`;
+  if (checkins.status === 'loading') return `<section class="card glass rise">${head}<p class="muted small" style="margin:0">Loading…</p></section>`;
+  const list = [...(checkins.snapshots || [])].reverse();
+  if (!list.length) return `<section class="card glass rise">${head}<p class="muted small" style="margin:0">${checkins.status === 'error' ? 'Couldn’t load check-ins right now.' : 'The first check-in arrives on the 1st of the month. It records where you stand and opens a reminder on GitHub.'}</p></section>`;
+  return `<section class="card glass rise">${head}<div class="rows">${list.map((s, i) => {
+    const prev = list[i + 1], d = prev ? s.owed - prev.owed : 0;
+    const mv = prev && prev.payoffMonth && s.payoffMonth ? ym(s.payoffMonth) - ym(prev.payoffMonth) : 0;
+    return `<div class="row"><div class="name"><b>${ymLabel(ym(s.month))}</b><small>${s.payoffMonth ? `Debt-free ${ymLabel(ym(s.payoffMonth))}` : 'Not on track'}${mv ? ` · ${Math.abs(mv)} mo ${mv < 0 ? 'sooner' : 'later'}` : ''} · ${money(s.totalInterest)} interest left</small></div>
+      <div class="right"><span class="amt num">${money(s.owed)}</span>${prev && Math.abs(d) >= 1 ? `<small class="num" style="color:${d < 0 ? 'var(--good)' : 'var(--crit)'}">${d < 0 ? '↓' : '↑'} ${money(Math.abs(d))}</small>` : ''}</div></div>`;
+  }).join('')}</div></section>`;
+}
 
 export function renderHistory(view, ctx) {
   const { data, colorOf } = ctx;
@@ -10,6 +25,7 @@ export function renderHistory(view, ctx) {
   const monthName = k => new Date(`${k}-15`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   view.innerHTML = `
     <header class="topbar"><div><h1>History</h1></div><button class="btn primary" type="button" data-log style="height:40px">Log a payment</button></header>
+    ${checkinsCard(ctx)}
     ${ps.length ? `
     <section class="card glass rise">
       <div class="totals">
