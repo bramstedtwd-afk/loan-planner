@@ -1,0 +1,6 @@
+# Personal data never goes in this public repo. It lives in the private loan-data repo.
+local-data.json
+*.sqlite
+*.sqlite-journal
+node_modules/
+.DS_Store

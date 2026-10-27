@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engine tests</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; color: #111; background: #fff; }
+  li { list-style: none; padding: 2px 0; }
+  .pass::before { content: "✓ "; color: #0a7d3a; font-weight: 700; }
+  .fail::before { content: "✗ "; color: #c62828; font-weight: 700; }
+  .fail small { display: block; color: #c62828; margin-left: 18px; }
+  #sum { font-weight: 700; font-size: 16px; }
+</style>
+</head>
+<body>
+<p id="sum">Running…</p>
+<ul id="out"></ul>
+<script type="module">
+  import { run } from './harness.js';
+  import './engine.test.js';
+  const results = await run();
+  const failed = results.filter(r => !r.pass).length;
+  document.getElementById('out').innerHTML = results.map(r => `<li class="${r.pass ? 'pass' : 'fail'}">${r.name}${r.pass ? '' : `<small>${r.error}</small>`}</li>`).join('');
+  document.getElementById('sum').textContent = `${results.length - failed}/${results.length} passed`;
+  window.__results = { total: results.length, failed, failures: results.filter(r => !r.pass) };
+</script>
+</body>
+</html>

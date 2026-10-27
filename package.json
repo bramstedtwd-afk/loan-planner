@@ -1,0 +1,9 @@
+{
+  "name": "loan-planner",
+  "private": true,
+  "type": "module",
+  "description": "Student loan payoff planner. Static app, no build step.",
+  "scripts": {
+    "test": "node tests/run-node.mjs"
+  }
+}
