@@ -2,6 +2,7 @@
 import { ym, ymLabel, cashFlow, dailyInterest, isFed } from '../engine.js';
 import { money, dur, esc, pct } from '../format.js';
 import { balanceArea } from '../charts.js';
+import { header } from '../ui/layout.js';
 
 const WHY = {
   avalanche: 'Highest rate, so extra goes here first',
@@ -102,7 +103,7 @@ export function renderToday(view, ctx) {
     </section>`;
 
   view.innerHTML = `
-    <header class="topbar"><div><div class="date">${today}</div><h1>Today</h1></div><a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text>${esc(syncLabel)}</span></a></header>
+    ${header({ title: 'Today', eyebrow: today })}
     ${hero}
     <div class="board">
       <div class="col">${thisMonth}

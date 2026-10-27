@@ -1,6 +1,7 @@
 // History: monthly check-ins (from the check-in workflow), then every logged payment, newest first, grouped by month.
 import { money, esc } from '../format.js';
 import { ym, ymLabel } from '../engine.js';
+import { header, subnav } from '../ui/layout.js';
 
 function checkinsCard({ checkins }) {
   if (!checkins || checkins.status === 'off') return '';
@@ -24,7 +25,8 @@ export function renderHistory(view, ctx) {
   for (const p of ps) (groups[p.date.slice(0, 7)] ||= []).push(p);
   const monthName = k => new Date(`${k}-15`).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   view.innerHTML = `
-    <header class="topbar"><div><h1>History</h1></div><button class="btn primary" type="button" data-log style="height:40px">Log a payment</button></header>
+    ${header({ title: 'Loans', actions: '<button class="btn primary" type="button" data-log style="height:38px;font-size:14px">Log a payment</button>' })}
+    ${subnav([['loans', 'Loans'], ['activity', 'Activity']], 'activity', 'Loans views')}
     ${checkinsCard(ctx)}
     ${ps.length ? `
     <section class="card glass rise">

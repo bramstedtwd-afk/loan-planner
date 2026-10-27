@@ -3,9 +3,10 @@ import { ym, ymLabel, MON, STRATEGIES, simulate, simulateAll, interestMoves, app
 import { money, dur, esc, pct } from '../format.js';
 import { stackedBalance, paymentBars, raceLines, extraCurveChart, legend } from '../charts.js';
 import { formSheet } from '../ui/form-sheet.js';
+import { header } from '../ui/layout.js';
 
 export function renderPlan(view, ctx) {
-  const { data, start, colorOf, save, syncPill } = ctx;
+  const { data, start, colorOf, save } = ctx;
   const plan = data.plan, loans = data.loans;
   const st = STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
   const opts = { start };
@@ -30,7 +31,7 @@ export function renderPlan(view, ctx) {
   const maxInt = Math.max(...STRATEGIES.map(s => all[s.id].totalInterest), 1);
 
   view.innerHTML = `
-    <header class="topbar"><div><h1>Plan</h1></div>${syncPill}</header>
+    ${header({ title: 'Plan' })}
 
     <section class="card glass rise">
       <div class="tiles" data-summary>${summaryHtml(r)}</div>

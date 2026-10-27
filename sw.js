@@ -1,11 +1,11 @@
 // Lets the app open without a connection. App files: network first (so updates show up right away), saved copy when offline.
 // Pinned CDN files (sql.js, fonts) never change, so they come from the saved copy first. GitHub API calls are never stored here.
-const CACHE = 'loan-payoff-v2';
+const CACHE = 'loan-payoff-v3';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'css/app.css', 'icons/icon-192.png',
-  'js/app.js', 'js/engine.js', 'js/format.js', 'js/charts.js', 'js/report.js',
+  'js/app.js', 'js/routes.js', 'js/engine.js', 'js/format.js', 'js/charts.js', 'js/report.js',
   'js/store/db.js', 'js/store/github.js', 'js/store/sync.js', 'js/store/local.js',
   'js/screens/today.js', 'js/screens/plan.js', 'js/screens/money.js', 'js/screens/loans.js', 'js/screens/history.js', 'js/screens/settings.js',
-  'js/ui/sheet.js', 'js/ui/form-sheet.js', 'js/ui/log-payment.js'];
+  'js/ui/sheet.js', 'js/ui/form-sheet.js', 'js/ui/log-payment.js', 'js/ui/layout.js', 'js/ui/editors.js', 'js/ui/quick-actions.js'];
 const CDN = /^https:\/\/(cdnjs\.cloudflare\.com\/ajax\/libs\/sql\.js\/|fonts\.googleapis\.com|fonts\.gstatic\.com)/;
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });

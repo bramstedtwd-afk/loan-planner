@@ -1,5 +1,6 @@
 // Settings: connect the private data repo, see sync status, and download backups.
 import { esc, ago } from '../format.js';
+import { header } from '../ui/layout.js';
 
 export const TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new';
 
@@ -11,7 +12,7 @@ export function renderSettings(view, ctx) {
     : sync.status === 'conflict' ? 'Your planner changed on another device. Choose which version to keep on the Today screen.'
     : sync.error ? sync.error.message : `Connected to ${config.owner}/${config.repo}.`;
   view.innerHTML = `
-    <header class="topbar"><div><h1>Settings</h1></div></header>
+    ${header({ title: 'Settings', back: true })}
     <section class="card glass rise">
       <div class="card-h"><h2>GitHub sync</h2><span class="badge ${connected && sync.status === 'saved' ? '' : 'warn'}">${connected ? (sync.status === 'saved' ? 'Connected' : 'Needs attention') : 'Not connected'}</span></div>
       <p class="muted" style="margin:0 0 14px">${esc(statusLine)}</p>
@@ -59,6 +60,7 @@ export function renderSettings(view, ctx) {
     try { await ctx.onConnect(cfg); }
     catch (x) { err.textContent = x.message; err.hidden = false; btn.disabled = false; btn.textContent = connected ? 'Save and reconnect' : 'Connect'; }
   });
+  view.querySelector('[data-back]').addEventListener('click', ctx.onClose);
   view.querySelector('[data-sync-now]')?.addEventListener('click', ctx.onSyncNow);
   const forget = view.querySelector('[data-forget]');
   forget?.addEventListener('click', () => {

@@ -11,9 +11,11 @@ import { renderHistory } from './screens/history.js';
 import { renderPlan } from './screens/plan.js';
 import { renderMoney } from './screens/money.js';
 import { renderLoans } from './screens/loans.js';
-
-const SYNC_PILL = '<a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text></span></a>';
 import { openLogPayment } from './ui/log-payment.js';
+import { openQuickActions } from './ui/quick-actions.js';
+import { makeEditors } from './ui/editors.js';
+import { header } from './ui/layout.js';
+import { resolveRoute } from './routes.js';
 
 const SQL_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/';
 const CONFIG_KEY = 'loanPayoff.github.v1', DB_KEY = 'loanPayoff.db.v1';
@@ -36,7 +38,7 @@ async function loadCheckins() {
     checkins.snapshots = f ? (JSON.parse(new TextDecoder().decode(f.bytes)).snapshots || []) : [];
     checkins.status = 'ready';
   } catch { checkins.status = 'error'; }
-  if (location.hash === '#history') render();
+  if (resolveRoute(location.hash).key === 'activity') render();
 }
 
 function loadConfig() { try { return { ...DEFAULT_CONFIG, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}') }; } catch { return { ...DEFAULT_CONFIG }; } }
@@ -136,8 +138,8 @@ function download(name, bytes, type) {
 
 /* ---------- screens ---------- */
 const SCREENS = {
-  today: { title: 'Today', render: v => {
-    if (!state.data.loans.length) return emptyState(v);
+  today: { render: v => {
+    if (!state.data.loans.length) return emptyState(v, 'Today');
     const c = compute();
     return renderToday(v, {
       data: state.data, start, colorOf, ...c, syncLabel: syncInfo()[0],
@@ -145,39 +147,41 @@ const SCREENS = {
       onLogPayment: logPayment,
     });
   } },
-  history: { title: 'History', render: v => {
+  activity: { render: v => {
     if (state.config.token && (checkins.status === 'idle' || checkins.status === 'error')) loadCheckins();
     return renderHistory(v, { data: state.data, colorOf, onLogPayment: logPayment, onRemovePayment: removePayment, checkins: state.config.token ? checkins : { status: 'off' } });
   } },
-  settings: { title: 'Settings', render: v => renderSettings(v, {
+  settings: { render: v => renderSettings(v, {
     config: state.config, sync: state.sync, onConnect: connect,
+    onClose: () => { location.hash = `#${state.lastTab || 'today'}`; },
     onSyncNow: async () => { await state.sync.retry(); reloadData(); render(); },
     onForget: () => { const c = { ...state.config, token: '' }; state.config = c; saveConfig(c); state.sync.remote = null; state.sync.set(STATUS.LOCAL); render(); toast('Key removed from this device'); },
     onDownloadDb: () => download(`planner-${todayISO()}.sqlite`, exportBytes(state.sync.db), 'application/vnd.sqlite3'),
     onExportJson: () => download(`planner-${todayISO()}.json`, JSON.stringify({ app: 'loan-payoff', exportedAt: new Date().toISOString(), ...state.data }, null, 2), 'application/json'),
   }) },
-  plan: { title: 'Plan', render: v => state.data.loans.length ? renderPlan(v, { data: state.data, start, colorOf, save, syncPill: SYNC_PILL }) : emptyState(v) },
-  money: { title: 'Money', render: v => renderMoney(v, { data: state.data, start, save, syncPill: SYNC_PILL }) },
-  loans: { title: 'Loans', render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save, syncPill: SYNC_PILL }); } },
+  plan: { render: v => state.data.loans.length ? renderPlan(v, { data: state.data, start, colorOf, save }) : emptyState(v, 'Plan') },
+  wealth: { render: v => renderMoney(v, { data: state.data, start, save }) },
+  loans: { render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save }); } },
 };
 
-function emptyState(v) {
+function emptyState(v, title) {
   const connected = !!state.config.token;
-  v.innerHTML = `<header class="topbar"><div><h1>Today</h1></div><a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text></span></a></header>
+  v.innerHTML = `${header({ title })}
     <section class="card glass empty rise"><h2>${connected ? 'No loans in your planner yet' : 'Connect your planner'}</h2>
       <p>${connected ? 'Your data repo is connected but has no loans yet.' : 'Your loans, earnings and payments live in your private GitHub repo. Add your access key to load them on this device.'}</p>
       ${connected ? '' : '<a class="btn primary" href="#settings">Connect GitHub</a>'}</section>`;
 }
 
 function render() {
-  const hash = location.hash.slice(1);
-  const key = hash in SCREENS ? hash : 'today';
-  const scr = SCREENS[key];
+  const route = resolveRoute(location.hash);
+  if (route.redirected) history.replaceState(null, '', `#${route.key}`);
+  if (route.tab) state.lastTab = route.key;
   document.querySelectorAll('.side a.nav, .tabbar a').forEach(a => {
-    if (a.getAttribute('href') === `#${key}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    const tab = a.getAttribute('href').slice(1);
+    if (tab === (route.tab || route.key)) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  document.title = `${scr.title} · Loan Payoff`;
-  state.screen = scr.render(view);
+  document.title = `${route.title} · Loan Payoff`;
+  state.screen = SCREENS[route.key].render(view);
   paintSync();
 }
 
@@ -185,7 +189,13 @@ function render() {
 addEventListener('hashchange', () => { render(); scrollTo(0, 0); });
 let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => state.screen?.redraw?.(), 120); });
 addEventListener('online', async () => { await state.sync?.retry(); reloadData(); render(); });
-document.querySelector('[data-quick]').addEventListener('click', logPayment);
+document.querySelector('[data-quick]').addEventListener('click', () => {
+  const ed = makeEditors({ data: state.data, save, start });
+  openQuickActions({
+    log: state.data.loans.length ? logPayment : null,
+    income: () => ed.editIncome(null), cost: () => ed.editCost(null), lump: () => ed.editLump(null),
+  });
+});
 conflictEl.addEventListener('click', async e => {
   const b = e.target.closest('[data-resolve]'); if (!b) return;
   await state.sync.resolve(b.dataset.resolve); reloadData(); render();

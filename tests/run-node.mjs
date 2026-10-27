@@ -6,6 +6,7 @@ globalThis.__SQL = await initSqlJs();
 await import('./engine.test.js');
 await import('./store.test.js');
 await import('./report.test.js');
+await import('./routes.test.js');
 
 const results = await run();
 for (const r of results) console.log(`${r.pass ? 'ok  ' : 'FAIL'} ${r.name}${r.pass ? '' : `\n     ${r.error}`}`);

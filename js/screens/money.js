@@ -2,13 +2,12 @@
 import { ym, ymStr, ymLabel, cashFlow, toMonthly, activeIn, simulate } from '../engine.js';
 import { money, esc } from '../format.js';
 import { cashflowBars, legend } from '../charts.js';
-import { formSheet } from '../ui/form-sheet.js';
-
-const INC_KINDS = { part: 'Part-time', intern: 'Internship', full: 'Full-time', other: 'Other' };
+import { makeEditors, INC_KINDS } from '../ui/editors.js';
+import { header } from '../ui/layout.js';
 const range = s => `${s.start ? ymLabel(ym(s.start)) : '—'} – ${s.end ? ymLabel(ym(s.end)) : 'ongoing'}`;
 
 export function renderMoney(view, ctx) {
-  const { data, start, save, syncPill } = ctx;
+  const { data, start, save } = ctx;
   const plan = data.plan, st = plan.strategy;
   const g = ym(plan.gradMonth) ?? start + 12;
 
@@ -32,7 +31,7 @@ export function renderMoney(view, ctx) {
   const lumpRow = (s, i) => `<button class="row" type="button" data-lump="${i}"><div class="name"><b>${esc(s.label || 'One-time payment')}</b><small>${s.month ? ymLabel(ym(s.month)) : 'No month set'}</small></div><span class="amt num">${money(+s.amount || 0)}</span></button>`;
 
   view.innerHTML = `
-    <header class="topbar"><div><h1>Money</h1></div>${syncPill}</header>
+    ${header({ title: 'Wealth' })}
     <section class="card glass rise">
       <div class="card-h"><h2>${new Date(Math.floor(start / 12), start % 12, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h2><span class="muted small">This month</span></div>
       <div class="tiles">
@@ -94,83 +93,8 @@ export function renderMoney(view, ctx) {
   });
   slider.addEventListener('change', () => { if (+slider.value !== share) save({ ...data, plan: { ...plan, share: +slider.value } }, `Send ${slider.value}% of leftover cash to loans`, `Sending ${slider.value}% of leftover cash to loans`); });
 
-  // editors
-  const setList = (key, list, message, toastMsg) => save({ ...data, plan: { ...plan, [key]: list } }, message, toastMsg);
-  const editIncome = (i, preset) => {
-    const isNew = i == null, s = isNew ? preset : plan.incomes[i];
-    formSheet({
-      title: isNew ? 'Add income' : 'Edit income',
-      fields: [
-        { name: 'label', label: 'Name', value: s.label, required: true, maxlength: 50, placeholder: 'Campus job' },
-        { name: 'kind', label: 'Type', type: 'segmented', value: s.kind || 'other', options: Object.entries(INC_KINDS) },
-        { name: 'amount', label: 'Take-home pay', type: 'number', value: s.amount, prefix: '$', min: 0, step: 1, required: true, half: true },
-        { name: 'per', label: 'Paid per', type: 'segmented', value: s.per || 'week', options: [['week', 'Week'], ['month', 'Month']], half: true },
-        { name: 'start', label: 'Starts', type: 'month', value: s.start, required: true, half: true },
-        { name: 'end', label: 'Ends', hint: 'blank = ongoing', type: 'month', value: s.end, half: true },
-      ],
-      footer: '<p class="split" data-monthly></p>',
-      onInput: (v, sheet) => { sheet.querySelector('[data-monthly]').innerHTML = v.amount > 0 ? `That’s about <b>${money(toMonthly(v))}</b> a month.` : ''; },
-      submitLabel: isNew ? 'Add income' : 'Save',
-      onSubmit: v => {
-        if (v.end && ym(v.end) < ym(v.start)) return 'The end month is before the start month.';
-        const item = { label: v.label, kind: v.kind, amount: +v.amount, per: v.per, start: v.start, end: v.end };
-        const list = isNew ? [...plan.incomes, item] : plan.incomes.map((x, k) => k === i ? item : x);
-        setList('incomes', list, `${isNew ? 'Added' : 'Updated'} income: ${item.label} ${money(item.amount)}/${item.per}`, `${item.label} ${isNew ? 'added' : 'saved'}`);
-      },
-      onDelete: isNew ? null : () => setList('incomes', plan.incomes.filter((_, k) => k !== i), `Removed income: ${s.label}`, `${s.label} removed`),
-    });
-  };
-  const editCost = (i, preset) => {
-    const isNew = i == null, s = isNew ? preset : plan.expenses[i];
-    formSheet({
-      title: isNew ? 'Add monthly costs' : 'Edit monthly costs',
-      fields: [
-        { name: 'label', label: 'Name', value: s.label, required: true, maxlength: 50, placeholder: 'Rent and food' },
-        { name: 'amount', label: 'Per month', type: 'number', value: s.amount, prefix: '$', min: 0, step: 1, required: true },
-        { name: 'start', label: 'Starts', type: 'month', value: s.start, required: true, half: true },
-        { name: 'end', label: 'Ends', hint: 'blank = ongoing', type: 'month', value: s.end, half: true },
-      ],
-      submitLabel: isNew ? 'Add costs' : 'Save',
-      onSubmit: v => {
-        if (v.end && ym(v.end) < ym(v.start)) return 'The end month is before the start month.';
-        const item = { label: v.label, amount: +v.amount, start: v.start, end: v.end };
-        const list = isNew ? [...plan.expenses, item] : plan.expenses.map((x, k) => k === i ? item : x);
-        setList('expenses', list, `${isNew ? 'Added' : 'Updated'} costs: ${item.label} ${money(item.amount)}/mo`, `${item.label} ${isNew ? 'added' : 'saved'}`);
-      },
-      onDelete: isNew ? null : () => setList('expenses', plan.expenses.filter((_, k) => k !== i), `Removed costs: ${s.label}`, `${s.label} removed`),
-    });
-  };
-  const editLump = i => {
-    const isNew = i == null, s = isNew ? { label: '', month: ymStr(start + 5), amount: '' } : plan.lumps[i];
-    formSheet({
-      title: isNew ? 'Add a one-time payment' : 'Edit one-time payment',
-      fields: [
-        { name: 'label', label: 'What is it', value: s.label, required: true, maxlength: 50, placeholder: 'Tax refund' },
-        { name: 'amount', label: 'Amount', type: 'number', value: s.amount, prefix: '$', min: 1, step: 1, required: true, half: true },
-        { name: 'month', label: 'Month', type: 'month', value: s.month, required: true, half: true },
-      ],
-      submitLabel: isNew ? 'Add' : 'Save',
-      onSubmit: v => {
-        const item = { label: v.label, amount: +v.amount, month: v.month };
-        const list = isNew ? [...plan.lumps, item] : plan.lumps.map((x, k) => k === i ? item : x);
-        setList('lumps', list, `${isNew ? 'Added' : 'Updated'} one-time payment: ${item.label} ${money(item.amount)} in ${ymLabel(ym(item.month))}`, `${item.label} ${isNew ? 'added' : 'saved'}`);
-      },
-      onDelete: isNew ? null : () => setList('lumps', plan.lumps.filter((_, k) => k !== i), `Removed one-time payment: ${s.label}`, `${s.label} removed`),
-    });
-  };
-
-  const summer = (() => { const y = Math.floor(start / 12) + (start % 12 >= 4 ? 1 : 0); return [ymStr(y * 12 + 4), ymStr(y * 12 + 7)]; })();
-  const INC_PRESETS = {
-    part: { label: 'Part-time job', kind: 'part', per: 'week', start: ymStr(start), end: ymStr(g) },
-    intern: { label: 'Summer internship', kind: 'intern', per: 'week', start: summer[0], end: summer[1] },
-    full: { label: 'Full-time job', kind: 'full', per: 'week', start: ymStr(g + 1), end: '' },
-    other: { label: '', kind: 'other', per: 'month', start: ymStr(start), end: '' },
-  };
-  const COST_PRESETS = {
-    now: { label: 'Current monthly costs', start: ymStr(start), end: ymStr(g) },
-    post: { label: 'After-graduation costs', start: ymStr(g + 1), end: '' },
-    other: { label: '', start: ymStr(start), end: '' },
-  };
+  // editors (shared with the + quick actions)
+  const { editIncome, editCost, editLump, INC_PRESETS, COST_PRESETS } = makeEditors({ data, save, start });
   view.querySelectorAll('[data-inc]').forEach(b => b.addEventListener('click', () => editIncome(+b.dataset.inc)));
   view.querySelectorAll('[data-exp]').forEach(b => b.addEventListener('click', () => editCost(+b.dataset.exp)));
   view.querySelectorAll('[data-lump]').forEach(b => b.addEventListener('click', () => editLump(+b.dataset.lump)));

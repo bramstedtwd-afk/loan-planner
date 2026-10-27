@@ -2,11 +2,12 @@
 import { ym, ymStr, ymLabel, isFed, KINDS, dailyInterest } from '../engine.js';
 import { money, esc, pct, todayISO } from '../format.js';
 import { formSheet } from '../ui/form-sheet.js';
+import { header, subnav } from '../ui/layout.js';
 
 const owedOf = l => (+l.balance || 0) + (+l.unpaid || 0);
 
 export function renderLoans(view, ctx) {
-  const { data, result: r, start, colorOf, save, syncPill } = ctx;
+  const { data, result: r, start, colorOf, save } = ctx;
   const loans = data.loans;
   const total = loans.reduce((s, l) => s + owedOf(l), 0);
   const orig = loans.reduce((s, l) => s + (+l.origBalance || owedOf(l)), 0);
@@ -29,7 +30,8 @@ export function renderLoans(view, ctx) {
   };
   const priv = loans.filter(l => !isFed(l.kind)), fed = loans.filter(l => isFed(l.kind));
   view.innerHTML = `
-    <header class="topbar"><div><h1>Loans</h1></div>${syncPill}</header>
+    ${header({ title: 'Loans' })}
+    ${subnav([['loans', 'Loans'], ['activity', 'Activity']], 'loans', 'Loans views')}
     <section class="card glass rise">
       <div class="tiles">
         <div class="tile"><span>Total owed</span><b class="num">${money(total)}</b></div>
