@@ -185,7 +185,7 @@ await state.sync.start();
 state.data = normalize(state.sync.data());
 
 // Development only: with nothing saved and no repo connected, start from a git-ignored local-data.json if one exists.
-if (!state.data.loans.length && !remote) {
+if (!state.data.loans.length && !remote && ['localhost', '127.0.0.1'].includes(location.hostname)) {
   const { data } = await loadLocal();
   if (data?.loans?.length) { state.data = normalize(data); state.sync.commit(state.data, 'Imported from local file'); }
 }
