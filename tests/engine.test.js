@@ -2,7 +2,7 @@
 import { test, eq, near, ok } from './harness.js';
 import {
   ym, ymStr, ymLabel, amort, cashFlow, toMonthly, simulate, simulateAll, migratePlan, splitPayment,
-  interestMoves, applyMove, defaultPlan, dailyInterest, WEEKS_PER_MONTH,
+  interestMoves, applyMove, defaultPlan, dailyInterest, WEEKS_PER_MONTH, extraCurve, yearlySummary,
 } from '../js/engine.js';
 
 const START = ym('2026-10');
@@ -180,6 +180,28 @@ test('interest moves are ranked by savings and apply cleanly', () => {
   const extra = moves.find(m => m.key === 'extra250');
   const after = simulate(loans, applyMove(p, extra.apply, opts), 'avalanche', opts);
   near(after.totalInterest, extra.result.totalInterest, 1e-6, 'applying a move reproduces its projection;');
+});
+
+test('paying more each month never costs more interest or takes longer', () => {
+  const loans = [
+    loan({ id: 'a', kind: 'private', balance: 12000, rate: 9, termMonths: 120 }),
+    loan({ id: 'b', kind: 'fed_unsub', balance: 6000, rate: 6, repayStart: '2027-06' }),
+  ];
+  const c = extraCurve(loans, plan({ incomes: [{ amount: 600, per: 'month', start: '2026-10' }] }), 'avalanche', { ...opts, max: 1000, steps: 10 });
+  eq(c.length, 11); eq(c[0].extra, 0); eq(c[10].extra, 1000);
+  for (let i = 1; i < c.length; i++) {
+    ok(c[i].interest <= c[i - 1].interest + 1e-6, `interest rose at +$${c[i].extra}`);
+    ok(c[i].months <= c[i - 1].months, `took longer at +$${c[i].extra}`);
+  }
+});
+
+test('the yearly schedule adds up to the monthly rows', () => {
+  const r = simulate([loan({ id: 'a', kind: 'private', balance: 10000, rate: 8, termMonths: 36 })], plan(), 'minimum', opts);
+  const ys = yearlySummary(r.rows);
+  eq(ys[0].year, 2026); eq(ys[0].rows.length, 3, 'Oct–Dec 2026;');
+  near(ys.reduce((s, y) => s + y.paid, 0), r.totalPaid, 1e-6);
+  near(ys.reduce((s, y) => s + y.interestPaid + y.principalPaid, 0), r.totalPaid, 1e-6);
+  near(ys[ys.length - 1].endBalance, 0, 0.005);
 });
 
 test('all strategies run and minimums-only is never cheaper than avalanche', () => {

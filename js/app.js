@@ -8,6 +8,11 @@ import { loadLocal } from './store/local.js';
 import { renderToday } from './screens/today.js';
 import { renderSettings } from './screens/settings.js';
 import { renderHistory } from './screens/history.js';
+import { renderPlan } from './screens/plan.js';
+import { renderMoney } from './screens/money.js';
+import { renderLoans } from './screens/loans.js';
+
+const SYNC_PILL = '<a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text></span></a>';
 import { openLogPayment } from './ui/log-payment.js';
 
 const SQL_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/';
@@ -134,7 +139,9 @@ const SCREENS = {
     onDownloadDb: () => download(`planner-${todayISO()}.sqlite`, exportBytes(state.sync.db), 'application/vnd.sqlite3'),
     onExportJson: () => download(`planner-${todayISO()}.json`, JSON.stringify({ app: 'loan-payoff', exportedAt: new Date().toISOString(), ...state.data }, null, 2), 'application/json'),
   }) },
-  plan: { title: 'Plan' }, money: { title: 'Money' }, loans: { title: 'Loans' },
+  plan: { title: 'Plan', render: v => state.data.loans.length ? renderPlan(v, { data: state.data, start, colorOf, save, syncPill: SYNC_PILL }) : emptyState(v) },
+  money: { title: 'Money', render: v => renderMoney(v, { data: state.data, start, save, syncPill: SYNC_PILL }) },
+  loans: { title: 'Loans', render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save, syncPill: SYNC_PILL }); } },
 };
 
 function emptyState(v) {
@@ -145,11 +152,6 @@ function emptyState(v) {
       ${connected ? '' : '<a class="btn primary" href="#settings">Connect GitHub</a>'}</section>`;
 }
 
-function placeholder(v, title) {
-  v.innerHTML = `<header class="topbar"><div><h1>${esc(title)}</h1></div><a class="sync glass" href="#settings" data-sync><span class="dot"></span><span data-sync-text></span></a></header>
-    <section class="card glass empty"><h2>${esc(title)} is being rebuilt</h2><p>This screen moves over from your current planner in the next steps. Until then, use the planner artifact for it.</p><a class="btn soft" href="#today">Back to Today</a></section>`;
-}
-
 function render() {
   const hash = location.hash.slice(1);
   const key = hash in SCREENS ? hash : 'today';
@@ -158,7 +160,7 @@ function render() {
     if (a.getAttribute('href') === `#${key}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   document.title = `${scr.title} · Loan Payoff`;
-  state.screen = scr.render ? scr.render(view) : placeholder(view, scr.title);
+  state.screen = scr.render(view);
   paintSync();
 }
 

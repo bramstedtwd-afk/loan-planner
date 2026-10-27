@@ -183,6 +183,30 @@ export function interestMoves(loans, plan, strategy, { start = nowYM() } = {}) {
   return moves.filter(m => m.saved > 0.5).sort((a, b) => b.saved - a.saved);
 }
 
+// Total interest and payoff at each extra monthly amount (0 → max), for the "what paying more buys you" curve.
+export function extraCurve(loans, plan, strategy, { start = nowYM(), max = 1000, steps = 20 } = {}) {
+  const vs = strategy === 'minimum' ? 'avalanche' : strategy;
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const a = Math.round(max * i / steps);
+    const r = simulate(loans, { ...plan, extraMonthly: a }, vs, { start });
+    out.push({ extra: a, interest: r.totalInterest, payoffM: r.payoffM, months: r.months, done: r.done });
+  }
+  return out;
+}
+
+// Rolls monthly rows up into calendar years: paid, interest paid, principal paid, balance at year end.
+export function yearlySummary(rows) {
+  const years = [];
+  for (const x of rows) {
+    const y = Math.floor(x.m / 12);
+    let g = years[years.length - 1];
+    if (!g || g.year !== y) years.push(g = { year: y, paid: 0, interestPaid: 0, principalPaid: 0, endBalance: 0, rows: [] });
+    g.paid += x.paid; g.interestPaid += x.interestPaid; g.principalPaid += x.principalPaid; g.endBalance = x.total; g.rows.push(x);
+  }
+  return years;
+}
+
 // Returns a new plan with a move applied.
 export function applyMove(plan, a, { start = nowYM() } = {}) {
   const p = JSON.parse(JSON.stringify(plan));
