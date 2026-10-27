@@ -51,7 +51,8 @@ const cache = {
 /* ---------- data ---------- */
 function normalize(d) {
   const loans = [...(d.loans || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(b.name));
-  return { loans, payments: d.payments || [], scenarios: d.scenarios || [], plan: migratePlan(d.plan || {}) };
+  const accounts = [...(d.accounts || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(b.name));
+  return { loans, payments: d.payments || [], scenarios: d.scenarios || [], plan: migratePlan(d.plan || {}), accounts };
 }
 const reloadData = () => { state.data = normalize(state.sync.data()); };
 

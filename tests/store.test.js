@@ -1,6 +1,6 @@
 // Database and sync tests. The runner puts an initialized sql.js module on globalThis.__SQL.
 import { test, eq, near, ok } from './harness.js';
-import { openDb, readAll, writeAll, exportBytes, schemaVersion, DB_VERSION } from '../js/store/db.js';
+import { openDb, readAll, writeAll, exportBytes, schemaVersion, DB_VERSION, MIGRATIONS_FOR_TESTS } from '../js/store/db.js';
 import { Sync, STATUS } from '../js/store/sync.js';
 import { toB64, fromB64 } from '../js/store/github.js';
 import { simulate, ym } from '../js/engine.js';
@@ -55,6 +55,36 @@ test('the file survives export and reopen', () => {
   const again = openDb(SQL(), exportBytes(db));
   eq(JSON.stringify(readAll(again)), JSON.stringify(readAll(db)));
   eq(JSON.stringify(Array.from(fromB64(toB64(new Uint8Array([0, 1, 254, 255]))))), '[0,1,254,255]', 'base64 round-trip;');
+});
+
+test('a version 1 file upgrades to the current version with every row intact', () => {
+  // Build a file exactly as version 1 of the app wrote it.
+  const v1 = new (SQL().Database)();
+  v1.exec(MIGRATIONS_FOR_TESTS[0]);
+  v1.run("INSERT INTO meta (key, value) VALUES ('schema_version', '1')");
+  v1.run("INSERT INTO loans (id, name, kind, balance, unpaid, rate, sort) VALUES ('a', 'Lender A', 'private', 9000, 400.5, 9, 1)");
+  v1.run("INSERT INTO payments (id, loan_id, date, amount, interest, principal) VALUES ('p1', 'a', '2026-10-20', 200, 30.5, 169.5)");
+  v1.run("INSERT INTO incomes (label, kind, amount, per, start_month, end_month) VALUES ('Job', 'full', 1000, 'week', '2028-06', '')");
+  v1.run("INSERT INTO settings (key, value) VALUES ('strategy', '\"snowball\"'), ('extraMonthly', '150')");
+  const upgraded = openDb(SQL(), v1.export());
+  eq(schemaVersion(upgraded), DB_VERSION); ok(DB_VERSION >= 2);
+  const d = readAll(upgraded);
+  eq(d.loans.length, 1); eq(d.loans[0].unpaid, 400.5); eq(d.payments[0].principal, 169.5);
+  eq(d.plan.incomes[0].amount, 1000); eq(d.plan.strategy, 'snowball'); eq(d.plan.extraMonthly, 150);
+  eq(d.accounts.length, 0, 'no accounts yet;');
+  eq(d.plan.emergencyMonths, 3, 'new settings get defaults;'); eq(d.plan.assumedReturn, 6);
+});
+
+test('accounts and their balance history round-trip', () => {
+  const db = openDb(SQL()), d = sample();
+  d.accounts = [
+    { id: 'chk', name: 'Checking', kind: 'bank', institution: 'Bank A', balance: 2500.25, rate: 0, minPayment: 0, source: 'manual', updatedAt: '2026-10-27', order: 0, notes: '',
+      history: [{ date: '2026-09-30', balance: 2100 }, { date: '2026-10-27', balance: 2500.25 }] },
+    { id: 'cc', name: 'Credit card', kind: 'debt', institution: 'Card Co', balance: 640, rate: 24.99, minPayment: 35, source: 'manual', updatedAt: '2026-10-20', order: 1, notes: '', history: [] },
+  ];
+  writeAll(db, d);
+  const back = readAll(openDb(SQL(), exportBytes(db)));
+  eq(JSON.stringify(back.accounts), JSON.stringify(d.accounts));
 });
 
 test('a file from a newer app version is refused, not damaged', () => {

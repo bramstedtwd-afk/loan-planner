@@ -24,6 +24,7 @@
   await import('./store.test.js');
   await import('./report.test.js');
   await import('./routes.test.js');
+  await import('./wealth.test.js');
   const results = await run();
   const failed = results.filter(r => !r.pass).length;
   document.getElementById('out').innerHTML = results.map(r => `<li class="${r.pass ? 'pass' : 'fail'}">${r.name}${r.pass ? '' : `<small>${r.error}</small>`}</li>`).join('');

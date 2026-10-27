@@ -27,11 +27,19 @@ const MIGRATIONS = [
      id TEXT PRIMARY KEY, name TEXT NOT NULL, plan TEXT NOT NULL, payoff_month INTEGER, total_interest REAL, saved_at TEXT NOT NULL DEFAULT '');
    CREATE TABLE snapshots (
      month TEXT PRIMARY KEY, owed REAL NOT NULL, payoff_month INTEGER, total_interest REAL, taken_at TEXT NOT NULL);`,
+  // v2: accounts (bank, brokerage, retirement, other debts) and a dated history of each balance.
+  `CREATE TABLE accounts (
+     id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, institution TEXT NOT NULL DEFAULT '',
+     balance REAL NOT NULL DEFAULT 0, rate REAL NOT NULL DEFAULT 0, min_payment REAL NOT NULL DEFAULT 0,
+     source TEXT NOT NULL DEFAULT 'manual', updated_at TEXT NOT NULL DEFAULT '', sort INTEGER NOT NULL DEFAULT 0, notes TEXT NOT NULL DEFAULT '');
+   CREATE TABLE account_history (
+     account_id TEXT NOT NULL, date TEXT NOT NULL, balance REAL NOT NULL, PRIMARY KEY (account_id, date));`,
 ];
 export const DB_VERSION = MIGRATIONS.length;
+export const MIGRATIONS_FOR_TESTS = MIGRATIONS;
 
 // Plan fields kept as JSON in `settings`; list fields live in their own tables.
-const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder'];
+const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder', 'emergencyMonths', 'assumedReturn', 'employerMatch', 'strategyOverride'];
 
 const rowsOf = (db, sql, params) => {
   const st = db.prepare(sql); if (params) st.bind(params);
@@ -83,7 +91,13 @@ export function readAll(db) {
   plan.incomes = rowsOf(db, 'SELECT * FROM incomes ORDER BY id').map(r => ({ label: r.label, kind: r.kind, amount: r.amount, per: r.per, start: r.start_month, end: r.end_month }));
   plan.expenses = rowsOf(db, 'SELECT * FROM expenses ORDER BY id').map(r => ({ label: r.label, amount: r.amount, start: r.start_month, end: r.end_month }));
   plan.lumps = rowsOf(db, 'SELECT * FROM lumps ORDER BY id').map(r => ({ month: r.month, label: r.label, amount: r.amount }));
-  return { loans, payments, scenarios, plan };
+  const history = {};
+  for (const h of rowsOf(db, 'SELECT * FROM account_history ORDER BY date')) (history[h.account_id] ||= []).push({ date: h.date, balance: h.balance });
+  const accounts = rowsOf(db, 'SELECT * FROM accounts ORDER BY sort, name').map(r => ({
+    id: r.id, name: r.name, kind: r.kind, institution: r.institution, balance: r.balance, rate: r.rate, minPayment: r.min_payment,
+    source: r.source, updatedAt: r.updated_at, order: r.sort, notes: r.notes, history: history[r.id] || [],
+  }));
+  return { loans, payments, scenarios, plan, accounts };
 }
 
 const num = v => (v === '' || v == null || Number.isNaN(+v)) ? 0 : +v;
@@ -94,7 +108,12 @@ export function writeAll(db, data) {
   const plan = migratePlan(data.plan || {});
   db.exec('BEGIN');
   try {
-    for (const t of ['loans', 'payments', 'incomes', 'expenses', 'lumps', 'settings', 'scenarios']) db.exec(`DELETE FROM ${t}`);
+    for (const t of ['loans', 'payments', 'incomes', 'expenses', 'lumps', 'settings', 'scenarios', 'accounts', 'account_history']) db.exec(`DELETE FROM ${t}`);
+    (data.accounts || []).forEach((a, i) => {
+      db.run('INSERT INTO accounts (id, name, kind, institution, balance, rate, min_payment, source, updated_at, sort, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        [str(a.id), str(a.name), str(a.kind), str(a.institution), num(a.balance), num(a.rate), num(a.minPayment), str(a.source || 'manual'), str(a.updatedAt), a.order ?? i, str(a.notes)]);
+      for (const h of a.history || []) db.run('INSERT OR REPLACE INTO account_history (account_id, date, balance) VALUES (?,?,?)', [str(a.id), str(h.date), num(h.balance)]);
+    });
     (data.loans || []).forEach((l, i) => db.run(
       'INSERT INTO loans (id, name, servicer, kind, balance, unpaid, rate, min_payment, term_months, repay_start, as_of, orig_balance, sort, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [str(l.id), str(l.name), str(l.servicer), str(l.kind), num(l.balance), num(l.unpaid), num(l.rate), num(l.minPayment), Math.round(num(l.termMonths)),

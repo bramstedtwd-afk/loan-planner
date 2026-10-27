@@ -27,7 +27,8 @@ export const STRATEGIES = [
   { id: 'minimum', name: 'Minimums only', desc: 'Pay only what is due each month. The baseline everything is measured against.' },
 ];
 
-export const defaultPlan = () => ({ strategy: 'avalanche', autopay: false, extraMonthly: 0, gradMonth: '', share: 100, refi: { on: false, rate: 5.5 }, customOrder: [], incomes: [], expenses: [], lumps: [] });
+export const defaultPlan = () => ({ strategy: 'avalanche', autopay: false, extraMonthly: 0, gradMonth: '', share: 100, refi: { on: false, rate: 5.5 }, customOrder: [], incomes: [], expenses: [], lumps: [],
+  emergencyMonths: 3, assumedReturn: 6, employerMatch: null, strategyOverride: null });
 
 // Older plans stored weekly "phases" (income + expenses + share); convert them to income sources and monthly costs.
 export function migratePlan(p) {
