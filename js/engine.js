@@ -27,7 +27,7 @@ export const STRATEGIES = [
   { id: 'minimum', name: 'Minimums only', desc: 'Pay only what is due each month. The baseline everything is measured against.' },
 ];
 
-export const defaultPlan = () => ({ strategy: 'avalanche', autopay: false, extraMonthly: 0, gradMonth: '', share: 100, refi: { on: false, rate: 5.5 }, customOrder: [], incomes: [], expenses: [], lumps: [],
+export const defaultPlan = () => ({ strategy: 'avalanche', autopay: false, extraMonthly: 0, gradMonth: '', share: 100, refi: { on: false, rate: 5.5 }, customOrder: [], incomes: [], expenses: [], lumps: [], planned: [],
   emergencyMonths: 3, assumedReturn: 6, employerMatch: null, strategyOverride: null, dismissed: {}, useSpareCash: false });
 
 // Older plans stored weekly "phases" (income + expenses + share); convert them to income sources and monthly costs.
@@ -51,15 +51,26 @@ export function amort(P, r, n) { if (P <= 0) return 0; const i = r / 12; return 
 export const toMonthly = s => (+s.amount || 0) * (s.per === 'week' ? WEEKS_PER_MONTH : 1);
 export const activeIn = (s, m) => ym(s.start) != null && ym(s.start) <= m && (ym(s.end) == null || m <= ym(s.end));
 
+// Planned one-time costs (tuition paid out of pocket…) still to pay in month m. Paid ones are already out of your bank balance.
+export const plannedIn = (plan, m) => (plan.planned || []).filter(p => !p.paidOn && ym(p.month) === m);
+
 // Everything coming in and going out in month m; what's left times the loan share is the loan budget.
+// `costs` is the recurring monthly costs only (it sizes the emergency fund); one-time planned costs are `oneTime`.
 export function cashFlow(plan, m) {
   const inc = (plan.incomes || []).filter(s => activeIn(s, m));
   const exp = (plan.expenses || []).filter(s => activeIn(s, m));
+  const planned = plannedIn(plan, m);
   const income = inc.reduce((a, s) => a + toMonthly(s), 0);
   const costs = exp.reduce((a, s) => a + (+s.amount || 0), 0);
+  const oneTime = planned.reduce((a, s) => a + (+s.amount || 0), 0);
   const share = plan.share == null || plan.share === '' ? 100 : +plan.share;
-  return { inc, exp, income, costs, left: income - costs, share, toLoans: Math.max(0, income - costs) * share / 100 };
+  const left = income - costs - oneTime;
+  return { inc, exp, planned, income, costs, oneTime, left, share, toLoans: Math.max(0, left) * share / 100 };
 }
+
+// A loan that hasn't been paid out yet (a future semester's federal loan) owes nothing until its month.
+export const isPending = (l, m = nowYM()) => { const d = ym(l.disburseMonth); return d != null && d > m; };
+export const owedNow = (l, m = nowYM()) => isPending(l, m) ? 0 : (+l.balance || 0) + (+l.unpaid || 0);
 export const monthlyBudget = (plan, m) => cashFlow(plan, m).toLoans;
 export const lumpsAt = (plan, m) => (plan.lumps || []).filter(l => ym(l.month) === m).reduce((s, l) => s + (+l.amount || 0), 0);
 
@@ -70,12 +81,15 @@ export function simulate(loans, plan, strategy, { start = nowYM() } = {}) {
     if (plan.refi?.on && l.kind === 'private') rate = +plan.refi.rate || 0;
     if (plan.autopay) rate = Math.max(0, rate - 0.25);
     const repay = ym(l.repayStart) ?? start;
-    const o = { id: l.id, name: l.name, kind: l.kind, idx, sub: l.kind === 'fed_sub', principal: Math.max(0, +l.balance || 0), unpaid: Math.max(0, +l.unpaid || 0),
-      rate: rate / 100, min: +l.minPayment || 0, term: +l.termMonths || 120, repay, started: repay <= start, paidOff: null, interest: 0 };
+    const pending = isPending(l, start), amount = Math.max(0, +l.balance || 0);
+    const o = { id: l.id, name: l.name, kind: l.kind, idx, sub: l.kind === 'fed_sub', principal: pending ? 0 : amount, unpaid: pending ? 0 : Math.max(0, +l.unpaid || 0),
+      rate: rate / 100, min: +l.minPayment || 0, term: +l.termMonths || 120, repay, started: !pending && repay <= start, paidOff: null, interest: 0,
+      pending, disb: pending ? ym(l.disburseMonth) : null, amount };
     if (o.started && !o.min) o.min = amort(o.principal + o.unpaid, o.rate, o.term);
     return o;
   });
   const owed = l => l.principal + l.unpaid;
+  let totalDisbursed = 0;
   const orderIdx = Object.fromEntries((plan.customOrder || []).map((id, i) => [id, i]));
   const effRate = (l, m) => (m < l.repay && l.sub) ? 0 : l.rate;
   const sorter = {
@@ -88,11 +102,12 @@ export function simulate(loans, plan, strategy, { start = nowYM() } = {}) {
   const rows = [];
   let m = start, totalInterest = 0, totalPaid = 0, shortfalls = 0, firstShortfall = null, unusedTotal = 0;
   const MAX = start + 12 * 40;
-  ls.forEach(l => { if (owed(l) < 0.005) l.paidOff = start - 1; });
-  while (ls.some(l => owed(l) >= 0.005) && m < MAX) {
-    let mInt = 0;
+  ls.forEach(l => { if (!l.pending && owed(l) < 0.005) l.paidOff = start - 1; });
+  while (ls.some(l => l.pending || owed(l) >= 0.005) && m < MAX) {
+    let mInt = 0, disbursed = 0;
     for (const l of ls) {
-      if (owed(l) < 0.005) continue;
+      if (l.pending && m >= l.disb) { l.pending = false; l.principal = l.amount; disbursed += l.amount; }
+      if (l.pending || owed(l) < 0.005) continue;
       if (!l.started && m >= l.repay) {
         l.principal += l.unpaid; l.unpaid = 0; l.started = true;
         if (!l.min) l.min = amort(l.principal, l.rate, l.term);
@@ -120,15 +135,15 @@ export function simulate(loans, plan, strategy, { start = nowYM() } = {}) {
     if (pool > 0.005) unusedTotal += pool;
     const paid = Object.values(pay).reduce((s, v) => s + v, 0);
     const iPaid = Object.values(intPaid).reduce((s, v) => s + v, 0);
-    totalInterest += mInt; totalPaid += paid;
+    totalInterest += mInt; totalPaid += paid; totalDisbursed += disbursed;
     const bal = {}; let total = 0;
-    for (const l of ls) { if (owed(l) < 0.005) { l.principal = 0; l.unpaid = 0; if (l.paidOff == null) l.paidOff = m; } bal[l.id] = owed(l); total += owed(l); }
-    rows.push({ m, pay, paid, interest: mInt, interestPaid: iPaid, principalPaid: paid - iPaid, bal, total, budget, minsDue, lump });
+    for (const l of ls) { if (!l.pending && owed(l) < 0.005) { l.principal = 0; l.unpaid = 0; if (l.paidOff == null) l.paidOff = m; } bal[l.id] = owed(l); total += owed(l); }
+    rows.push({ m, pay, paid, interest: mInt, interestPaid: iPaid, principalPaid: paid - iPaid, bal, total, budget, minsDue, lump, disbursed });
     m++;
   }
-  const done = !ls.some(l => owed(l) >= 0.005);
+  const done = !ls.some(l => l.pending || owed(l) >= 0.005);
   const last = rows.length ? rows[rows.length - 1].m : start - 1;
-  return { strategy, start, rows, init, initTotal: Object.values(init).reduce((s, v) => s + v, 0), totalInterest, totalPaid, done,
+  return { strategy, start, rows, init, initTotal: Object.values(init).reduce((s, v) => s + v, 0), totalInterest, totalPaid, totalDisbursed, done,
     payoffM: done ? last : null, months: done ? rows.length : null, shortfalls, firstShortfall, unusedTotal,
     loans: ls.map(l => ({ id: l.id, name: l.name, kind: l.kind, idx: l.idx, paidOff: l.paidOff, interest: l.interest, rate: l.rate, min: l.min })) };
 }
@@ -139,7 +154,7 @@ export function simulateAll(loans, plan, opts) {
 
 // Interest owed today (simple daily interest since the balance date). Subsidized federal loans accrue nothing before repayment.
 export function dailyInterest(loans, start = nowYM()) {
-  return loans.reduce((s, l) => s + ((l.kind === 'fed_sub' && ym(l.repayStart) > start) ? 0 : (+l.balance || 0) * (+l.rate || 0) / 100 / 365), 0);
+  return loans.reduce((s, l) => s + ((isPending(l, start) || (l.kind === 'fed_sub' && ym(l.repayStart) > start)) ? 0 : (+l.balance || 0) * (+l.rate || 0) / 100 / 365), 0);
 }
 
 // Split a payment the way servicers do: accrued interest first (simple daily interest since asOf), then principal.

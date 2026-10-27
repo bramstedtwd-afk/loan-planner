@@ -1,10 +1,10 @@
 // Monthly check-in: a snapshot of where things stand plus a readable report with reminders.
 // Pure function (no I/O) so it runs the same in tests, in the browser and in the monthly GitHub Action.
-import { ym, ymStr, ymLabel, nowYM, migratePlan, simulate, interestMoves, cashFlow, STRATEGIES } from './engine.js';
+import { ym, ymStr, ymLabel, nowYM, migratePlan, simulate, interestMoves, cashFlow, owedNow, STRATEGIES } from './engine.js';
 import { effectivePlan } from './wealth.js';
 
 const money = (n, cents = false) => (n < -0.004 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
-const owedOf = l => (+l.balance || 0) + (+l.unpaid || 0);
+const owedOf = (l, m) => owedNow(l, m);
 const monthName = m => ymLabel(m).replace(/^(\w+)/, s => ({ Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April', Jun: 'June', Jul: 'July', Aug: 'August', Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December' }[s] || s));
 
 // data: { loans, payments, plan }; snapshots: earlier results of this function (oldest first)
@@ -14,7 +14,7 @@ export function monthlyCheckin(data, snapshots = [], { now = new Date(), appUrl 
   const st = STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
   const ep = effectivePlan({ ...data, plan }, start);
   const r = simulate(loans, ep, st, { start });
-  const owed = loans.reduce((s, l) => s + owedOf(l), 0);
+  const owed = loans.reduce((s, l) => s + owedOf(l, start), 0);
   const prev = [...snapshots].filter(s => s.month < month).pop() || null;
   const lastMonth = ymStr(start - 1);
   const logged = payments.filter(p => String(p.date).startsWith(lastMonth));
@@ -84,16 +84,24 @@ export function reminders(data, { now = new Date(), hasHistory = false } = {}) {
   if (hasHistory && !payments.some(p => String(p.date).startsWith(lastMonth)) && row?.paid > 0) out.push({ key: 'no-log', text: `No payments were logged in ${monthName(start - 1)}. If you paid anything, log it so balances stay accurate.` });
   for (const l of loans) {
     const rs = ym(l.repayStart);
-    if (rs != null && rs > start && rs - start <= 2 && owedOf(l) > 0.005) out.push({ key: `repay-${l.id}`, text: `Repayment on **${l.name}** starts in ${monthName(rs)}. Confirm the minimum payment and due date with ${l.servicer || 'the servicer'}.` });
+    if (rs != null && rs > start && rs - start <= 2 && owedOf(l, start) > 0.005) out.push({ key: `repay-${l.id}`, text: `Repayment on **${l.name}** starts in ${monthName(rs)}. Confirm the minimum payment and due date with ${l.servicer || 'the servicer'}.` });
   }
-  for (const l of loans.filter(l => /variable/i.test(`${l.name} ${l.notes || ''}`) && owedOf(l) > 0.005)) out.push({ key: `variable-${l.id}`, text: `**${l.name}** has a variable rate. Check whether it changed and update it in the app.` });
-  const stale = loans.filter(l => owedOf(l) > 0.005 && l.asOf && (now - new Date(l.asOf)) / 864e5 > 60);
+  for (const l of loans.filter(l => /variable/i.test(`${l.name} ${l.notes || ''}`) && owedOf(l, start) > 0.005)) out.push({ key: `variable-${l.id}`, text: `**${l.name}** has a variable rate. Check whether it changed and update it in the app.` });
+  const stale = loans.filter(l => owedOf(l, start) > 0.005 && l.asOf && (now - new Date(l.asOf)) / 864e5 > 60);
   if (stale.length) out.push({ key: 'stale', text: `Balances not updated in over 60 days: ${stale.map(l => `${l.name} (${l.asOf})`).join(', ')}. Copy the latest balance from the servicer's site.` });
+  for (const p of (plan.planned || []).filter(p => !p.paidOn && ym(p.month) != null && ym(p.month) - start <= 1)) {
+    const pm = ym(p.month);
+    out.push({ key: `planned-${p.id}`, text: pm < start
+      ? `**${p.label}** (${money(+p.amount)}) was planned for ${monthName(pm)}. If you paid it, mark it paid in Wealth → Cash flow; if not, move it to the right month.`
+      : `**${p.label}** (${money(+p.amount)}) is due ${pm === start ? 'this month' : `in ${monthName(pm)}`}. Your cushion already holds it; mark it paid in Wealth → Cash flow when you pay.` });
+  }
+  for (const l of loans.filter(l => ym(l.disburseMonth) != null && ym(l.disburseMonth) <= start)) out.push({ key: `arrived-${l.id}`,
+    text: `**${l.name}** was planned to arrive in ${monthName(ym(l.disburseMonth))}. Confirm the amount you actually got on the Loans tab.` });
   const grad = ym(plan.gradMonth);
   if (grad != null && grad >= start && grad - start <= 1) out.push({ key: 'grad', text: `Graduation is ${grad === start ? 'this month' : 'next month'}. Your grace period starts; review your income and costs in the app.` });
   const short = r.rows.slice(0, 3).filter(x => cashFlow(plan, x.m).inc.length && x.budget + 0.01 < x.minsDue).length;
   const cf = cashFlow(plan, start), spare = ep.lumps.filter(l => ym(l.month) === start).reduce((a, l) => a + (+l.amount || 0), 0);
   if (short) out.push({ key: 'short', text: `Your income doesn't cover the required minimums in ${short} of the next 3 months.` });
-  else if (cf.inc.length && row && row.paid > Math.max(0, cf.income - cf.costs) + spare + 1) out.push({ key: 'savings-draw', text: `This month's plan sends ${money(row.paid)} to loans but only ${money(cf.income - cf.costs)} is left after costs. The difference would come from savings.` });
+  else if (cf.inc.length && row && row.paid > Math.max(0, cf.left) + spare + 1) out.push({ key: 'savings-draw', text: `This month's plan sends ${money(row.paid)} to loans but only ${money(Math.max(0, cf.left))} is left after costs. The difference would come from savings.` });
   return out;
 }

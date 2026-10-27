@@ -9,8 +9,8 @@ const SQL = () => globalThis.__SQL;
 
 const sample = () => ({
   loans: [
-    { id: 'a', name: 'Lender A · 9%', servicer: 'Lender A', kind: 'private', balance: 9000, unpaid: 400.5, rate: 9, minPayment: 0, termMonths: 180, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 9400.5, order: 1, notes: 'fixed' },
-    { id: 'b', name: 'Direct Sub', servicer: '', kind: 'fed_sub', balance: 3500, unpaid: 0, rate: 6.53, minPayment: 0, termMonths: 0, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 3500, order: 2, notes: '' },
+    { id: 'a', name: 'Lender A · 9%', servicer: 'Lender A', kind: 'private', balance: 9000, unpaid: 400.5, rate: 9, minPayment: 0, termMonths: 180, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 9400.5, order: 1, notes: 'fixed', disburseMonth: '' },
+    { id: 'b', name: 'Direct Sub', servicer: '', kind: 'fed_sub', balance: 3500, unpaid: 0, rate: 6.53, minPayment: 0, termMonths: 0, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 3500, order: 2, notes: '', disburseMonth: '' },
   ],
   payments: [{ id: 'p1', loanId: 'a', loanName: 'Lender A · 9%', date: '2026-10-20', amount: 200, interest: 30.5, principal: 169.5, note: 'test', createdAt: '2026-10-20T10:00:00Z' }],
   scenarios: [{ id: 's1', name: 'Big raise', plan: { strategy: 'snowball', extraMonthly: 100 }, payoffM: ym('2029-03'), totalInterest: 4100, savedAt: '2026-10-21T00:00:00Z' }],
@@ -161,4 +161,14 @@ test('unsaved edits on a stale copy are not pushed over newer GitHub data', asyn
   const da = a.data(); da.plan.share = 70; a.commit(da, 'A edit'); await a.flush();
   const b2 = device(remote, cacheB); await b2.start();
   eq(b2.status, STATUS.CONFLICT); eq(remote.commits.length, 2);
+});
+
+test('planned costs and future loans survive a save and reload', () => {
+  const d = sample();
+  d.plan.planned = [{ id: 'tu', label: 'Spring tuition', amount: 3000, month: '2027-01', paidOn: '' }, { id: 'bk', label: 'Books', amount: 400, month: '2027-01', paidOn: '2027-01-05' }];
+  d.loans[1].disburseMonth = '2027-01';
+  const db = openDb(SQL()); writeAll(db, d);
+  const back = readAll(openDb(SQL(), exportBytes(db)));
+  eq(JSON.stringify(back.plan.planned), JSON.stringify(d.plan.planned));
+  eq(back.loans.find(l => l.id === 'b').disburseMonth, '2027-01'); eq(back.loans.find(l => l.id === 'a').disburseMonth, '');
 });

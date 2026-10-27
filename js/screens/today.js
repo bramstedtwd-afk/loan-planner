@@ -1,47 +1,44 @@
 // Today: what to do this month. Debt-free date, the single best next move, and this month's to-dos.
-import { ym, ymStr, ymLabel, dailyInterest, interestMoves } from '../engine.js';
-import { recommendRoute, nextDollar, effectivePlan } from '../wealth.js';
+import { ym, ymStr, ymLabel, dailyInterest, interestMoves, isPending } from '../engine.js';
+import { recommendRoute, effectivePlan, monthAction } from '../wealth.js';
 import { reminders } from '../report.js';
 import { money, dur, esc } from '../format.js';
 import { header } from '../ui/layout.js';
 
 const md = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 
-// The one thing most worth doing next, in priority order.
+// A way to pay less interest, when there is one. This month's action itself comes from monthAction().
 function bestMove(data, results, strategy, start) {
   const r = results[strategy];
   const rec = recommendRoute(data, { start });
-  const hasBank = (data.accounts || []).some(a => a.kind === 'bank');
   const onRoute = Math.abs(r.totalInterest - rec.result.totalInterest) < 1 && r.payoffM === rec.result.payoffM;
-  if (!hasBank && rec.relyOnSavings) return {
-    title: 'Add your bank balance', detail: `Your plan sends ${money(rec.currentMonthly)} a month but only ${money(rec.monthly)} is left after costs. With your balance, the app can tell whether savings can safely cover the difference.`,
-    action: { label: 'Add balance', href: '#accounts' },
-  };
   if (!onRoute && rec.result.totalInterest < r.totalInterest - 1) return {
     title: `Switch to the best route (${rec.name})`, detail: `${rec.lumpNow ? `Put ${money(rec.lumpNow)} of savings in now and send` : 'Send'} ${money(rec.monthly)} a month.`,
     gain: { saved: r.totalInterest - rec.result.totalInterest, payoffM: rec.result.payoffM, sooner: (r.months ?? 480) - (rec.result.months ?? 480) },
     action: { label: 'See the route', href: '#plan' },
   };
-  const step = nextDollar(data, { start }).find(s => s.status === 'now');
-  if (step && hasBank && (step.key === 'emergency' || step.key.startsWith('debt-'))) return { title: step.title, detail: step.detail, action: { label: 'Open Wealth', href: '#wealth' } };
-  const m = interestMoves(data.loans, effectivePlan(data, start), strategy, { start })[0];
+  // Only moves that need no new money; "add $500 a month" isn't comfortable advice. Paying built-up interest counts only if it's safe cash.
+  const safe = monthAction(data, start).safe;
+  const m = interestMoves(data.loans, effectivePlan(data, start), strategy, { start })
+    .filter(x => !/^extra|^lump/.test(x.key) && (x.key !== 'built' || x.apply.lump <= safe))[0];
   if (m) return { title: m.title, detail: m.detail, gain: { saved: m.saved, payoffM: m.result.payoffM, sooner: m.sooner }, apply: m };
-  return { title: 'You’re on track', detail: 'Your plan already uses every move this app can test. Keep logging payments as you make them.' };
+  return null;
 }
 
 export function renderToday(view, ctx) {
-  const { data, results, start, strategy, strategyName, hasHistory, save, onApplyMove } = ctx;
+  const { data, results, start, strategy, strategyName, hasHistory, save, onApplyMove, onLogPayment } = ctx;
   const plan = data.plan, r = results[strategy];
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const grad = ym(plan.gradMonth);
 
   // hero
-  const orig = data.loans.reduce((s, l) => s + (+l.origBalance || (+l.balance || 0) + (+l.unpaid || 0)), 0);
+  const orig = data.loans.filter(l => !isPending(l, start)).reduce((s, l) => s + (+l.origBalance || (+l.balance || 0) + (+l.unpaid || 0)), 0);
   const paidPct = orig ? Math.max(0, Math.min(1, 1 - r.initTotal / orig)) : 0;
   const end = r.done ? r.payoffM + 1 : null;
   const pin = r.done && grad != null && grad > start && grad < end ? (grad - start) / (end - start) : null;
 
   // best move and to-dos
+  const act = monthAction(data, start);
   const move = bestMove(data, results, strategy, start);
   const monthKey = ymStr(start);
   const done = new Set(plan.dismissed?.[monthKey] || []);
@@ -66,8 +63,18 @@ export function renderToday(view, ctx) {
     </section>
 
     <div class="board">
-      <section class="card glass move rise" aria-label="Best next move">
-        <div class="card-h" style="margin:0"><span class="spark" aria-hidden="true"><svg class="i"><use href="#i-spark"/></svg></span><span class="badge warn">Best next move</span></div>
+      <section class="card glass move rise" aria-label="This month">
+        <div class="card-h" style="margin:0"><span class="spark" aria-hidden="true"><svg class="i"><use href="#i-send"/></svg></span><span class="badge ${act.kind === 'over' ? 'warn' : ''}">This month</span></div>
+        <h3>${esc(act.title)}</h3>
+        <p class="muted small" style="margin:0">${esc(act.detail)}</p>
+        ${act.kind !== 'no-bank' && act.cushion.target > 0 ? `<div class="gain">
+          <div><span>Cash now</span><b class="num">${money(act.cushion.cash)}</b></div>
+          <div><span>Cushion kept</span><b class="num">${money(act.cushion.target)}</b></div>
+          ${act.cushion.upcoming.length ? `<div><span>Set aside</span><b class="num">${money(act.cushion.upcoming.reduce((s, p) => s + (+p.amount || 0), 0))}</b></div>` : `<div><span>Safe extra</span><b class="num ${act.safe ? 'pos' : ''}">${money(act.safe)}</b></div>`}</div>` : '<div style="height:14px"></div>'}
+        <div class="actions">${act.action ? act.action.log ? '<button class="btn primary" type="button" data-log>Log a payment</button>' : `<a class="btn primary" href="${act.action.href}">${esc(act.action.label)}</a>` : ''}</div>
+      </section>
+      ${move ? `<section class="card glass move rise" aria-label="Could save more">
+        <div class="card-h" style="margin:0"><span class="spark" aria-hidden="true"><svg class="i"><use href="#i-spark"/></svg></span><span class="badge warn">Could save more</span></div>
         <h3>${esc(move.title)}</h3>
         <p class="muted small" style="margin:0">${esc(move.detail)}</p>
         ${move.gain ? `<div class="gain">
@@ -75,7 +82,7 @@ export function renderToday(view, ctx) {
           <div><span>Debt-free</span><b class="num">${move.gain.payoffM != null ? ymLabel(move.gain.payoffM) : 'Not yet'}</b></div>
           ${move.gain.sooner > 0 ? `<div><span>Sooner by</span><b class="num">${dur(move.gain.sooner)}</b></div>` : ''}</div>` : '<div style="height:14px"></div>'}
         <div class="actions">${move.apply ? '<a class="btn soft" href="#plan">See the plan</a><button class="btn primary" type="button" data-try>Try it</button>' : move.action ? `<a class="btn primary" href="${move.action.href}">${esc(move.action.label)}</a>` : ''}</div>
-      </section>
+      </section>` : ''}
 
       <section class="card glass rise" aria-label="To-dos">
         <div class="card-h"><h2>This month’s to-dos</h2><span class="muted small">${open.length ? `${open.length} open` : todos.length ? 'All done' : ''}</span></div>
@@ -86,6 +93,7 @@ export function renderToday(view, ctx) {
     </div>`;
 
   view.querySelector('[data-try]')?.addEventListener('click', () => onApplyMove(move.apply));
+  view.querySelector('[data-log]')?.addEventListener('click', onLogPayment);
   view.querySelectorAll('[data-todo]').forEach(cb => cb.addEventListener('change', () => {
     const keys = new Set(plan.dismissed?.[monthKey] || []);
     cb.checked ? keys.add(cb.dataset.todo) : keys.delete(cb.dataset.todo);

@@ -214,3 +214,34 @@ test('all strategies run and minimums-only is never cheaper than avalanche', () 
   ok(all.avalanche.totalInterest <= all.minimum.totalInterest);
   ok(all.avalanche.totalInterest <= all.snowball.totalInterest + 0.01);
 });
+
+test('a planned one-time cost counts only in its month, and not once it is paid', () => {
+  const p = plan({ incomes: [{ amount: 2000, per: 'month', start: '2026-01' }], expenses: [{ amount: 1200, start: '2026-01' }],
+    planned: [{ id: 't', label: 'Spring tuition', amount: 3000, month: '2027-01' }] });
+  const jan = cashFlow(p, ym('2027-01')), dec = cashFlow(p, ym('2026-12'));
+  eq(jan.costs, 1200, 'recurring costs stay recurring;'); eq(jan.oneTime, 3000); eq(jan.left, -2200); eq(jan.toLoans, 0);
+  eq(dec.oneTime, 0); eq(dec.toLoans, 800);
+  eq(cashFlow({ ...p, planned: [{ ...p.planned[0], paidOn: '2026-12-20' }] }, ym('2027-01')).oneTime, 0);
+});
+
+test('a future loan owes nothing until it arrives, then joins the plan', () => {
+  const now = loan({ id: 'now', balance: 4000, rate: 6 });
+  const later = loan({ id: 'later', balance: 3000, rate: 6, disburseMonth: '2027-01' });
+  const r = simulate([now, later], plan({ extraMonthly: 200 }), 'avalanche', opts);
+  eq(r.initTotal, 4000, 'not owed yet;');
+  eq(r.rows.find(x => x.m === ym('2026-12')).bal.later, 0);
+  eq(r.rows.find(x => x.m === ym('2027-01')).disbursed, 3000);
+  const grace = simulate([{ ...later, repayStart: '2028-11' }], plan(), 'minimum', opts);
+  near(grace.rows.find(x => x.m === ym('2027-01')).bal.later, 3015, 1e-6, 'unsubsidized interest starts when it arrives;');
+  eq(grace.rows.find(x => x.m === ym('2026-12')).interest, 0);
+  ok(r.done, 'still pays off');
+  near(r.totalPaid, r.initTotal + r.totalInterest + r.totalDisbursed, 0.01, 'every dollar accounted for;');
+  eq(dailyInterest([later], START), 0);
+});
+
+test('a future subsidized loan stays interest-free until repayment starts', () => {
+  const sub = loan({ id: 'sub', kind: 'fed_sub', balance: 3500, rate: 6, disburseMonth: '2027-01', repayStart: '2028-11' });
+  const r = simulate([sub], plan(), 'minimum', opts);
+  near(r.rows.find(x => x.m === ym('2028-10')).bal.sub, 3500, 1e-9);
+  eq(r.rows.find(x => x.m === ym('2028-10')).paid, 0);
+});

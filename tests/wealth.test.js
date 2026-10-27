@@ -1,6 +1,6 @@
 // Wealth math tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood } from '../js/wealth.js';
+import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood, cushion, monthAction } from '../js/wealth.js';
 import { defaultPlan, ym, simulate } from '../js/engine.js';
 
 const START = ym('2026-10');
@@ -134,4 +134,45 @@ test('a missing or malformed snapshot leaves accounts alone', () => {
   eq(mergeRobinhood(list, null).changed, false);
   eq(mergeRobinhood(list, { source: 'other', accounts: [] }).changed, false);
   eq(mergeRobinhood(list, snap('2026-10-27T00:00:00Z', [{ totalValue: 5 }])).changed, false);
+});
+
+const tuition = (month, amount = 3000, extra = {}) => ({ id: 'tu', label: 'Spring tuition', amount, month, ...extra });
+test('the cushion holds back cash for a planned cost, so nothing is "spare" yet', () => {
+  const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 5730)] };
+  const c = cushion(d, START);
+  eq(c.amount, 0); eq(c.heldBack, 2130); eq(c.upcoming.length, 1);
+  eq(emergencyFund(d.accounts, d.plan, START).target, 3600, 'the one-time cost does not inflate the emergency fund;');
+  eq(spareCash(d, START), 0);
+  const a = monthAction(d, START);
+  eq(a.kind, 'keep'); ok(/Keep your savings/.test(a.detail) && /Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
+});
+
+test('with enough cash, only what is left after the cushion and the planned cost is safe', () => {
+  const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 9000)] };
+  const c = cushion(d, START);
+  ok(c.amount > 0 && c.amount < 9000 - 3600 - 2000, `safe ${c.amount}`);
+  ok(c.low.cash - c.amount >= c.target - 1, 'after paying it, the low point still covers the emergency fund');
+  const a = monthAction(d, START);
+  eq(a.kind, 'can-use-savings');
+  const used = monthAction({ ...d, plan: { ...d.plan, useSpareCash: true } }, START);
+  eq(used.kind, 'use-savings'); near(used.fromSavings, c.amount, 1); near(used.fromIncome, 800, 1);
+});
+
+test('a paid planned cost no longer holds anything back', () => {
+  const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01', 3000, { paidOn: '2026-10-20' })] }), accounts: [acct('c', 'bank', 5730)] };
+  eq(cushion(d, START).amount, 2100);
+});
+
+test('a future loan is not counted as owed yet', () => {
+  const ls = [...loans(), loan({ id: 'new', name: 'Spring unsub', kind: 'fed_unsub', balance: 2750, rate: 6.39, disburseMonth: '2027-01' })];
+  eq(netWorth([], ls).studentLoans, 14900);
+});
+
+test('when the plan’s extra would eat into the cushion, this month says what to send instead', () => {
+  const d = { loans: loans(), plan: plan({ extraMonthly: 250, planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 5000)] };
+  const a = monthAction(d, START);
+  eq(a.kind, 'over'); ok(/^Send \$800 this month, not \$1,050$/.test(a.title), a.title);
+  ok(/Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
+  const fine = monthAction({ ...d, accounts: [acct('c', 'bank', 20000)] }, START);
+  ok(fine.kind !== 'over', fine.kind);
 });

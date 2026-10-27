@@ -245,7 +245,7 @@ document.querySelector('[data-quick]').addEventListener('click', () => {
   openQuickActions({
     log: state.data.loans.length ? logPayment : null,
     balance: () => ed.pickAccountToUpdate(),
-    income: () => ed.editIncome(null), cost: () => ed.editCost(null), lump: () => ed.editLump(null),
+    income: () => ed.editIncome(null), cost: () => ed.editCost(null), planned: () => ed.editPlanned(null), lump: () => ed.editLump(null),
   });
 });
 conflictEl.addEventListener('click', async e => {

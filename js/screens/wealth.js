@@ -1,6 +1,7 @@
 // Wealth: what you have, what you owe, and where the next dollar should go.
 // Overview (net worth, emergency fund, next dollar) and Accounts (balances you keep up to date). Cash flow lives in money.js.
-import { netWorth, emergencyFund, nextDollar, ACCOUNT_KINDS } from '../wealth.js';
+import { netWorth, emergencyFund, nextDollar, cushion, ACCOUNT_KINDS } from '../wealth.js';
+import { ym, ymLabel } from '../engine.js';
 import { money, esc, ago, pct } from '../format.js';
 import { header, subnav } from '../ui/layout.js';
 import { makeEditors } from '../ui/editors.js';
@@ -56,6 +57,7 @@ export function renderWealth(view, ctx, sub) {
 
   // Overview
   const ef = emergencyFund(accounts, data.plan, start);
+  const cu = cushion(data, start);
   const steps = nextDollar(data, { start });
   const plan = data.plan;
   const assetsParts = [['Cash', nw.cash, 'var(--s3)'], ['Investing', nw.investments, 'var(--s1)'], ['Retirement', nw.retirement, 'var(--s7)']].filter(x => x[1] > 0.5);
@@ -81,7 +83,7 @@ export function renderWealth(view, ctx, sub) {
           <div class="card-h"><h2>Emergency fund</h2><span class="badge ${ef.funded && ef.monthlyCosts ? '' : 'warn'}">${ef.funded && ef.monthlyCosts ? 'Covered' : `${money(ef.gap)} to go`}</span></div>
           <div class="meter"><i style="width:${(efPct * 100).toFixed(1)}%"></i></div>
           <div class="meter-l"><span><b class="num">${money(ef.cash)}</b> cash</span><span>goal <b class="num">${money(ef.target)}</b></span></div>
-          <p class="muted small" style="margin:10px 0 0">${ef.monthlyCosts ? `${ef.months} months × ${money(ef.monthlyCosts)} of costs. ${ef.runwayMonths != null ? `Your cash covers about <b>${ef.runwayMonths.toFixed(1)} months</b> of costs.` : ''}${ef.surplus >= 100 ? ` <b>${money(ef.surplus)}</b> above the goal ${plan.useSpareCash ? 'goes to loans this month as part of your plan.' : 'could go to loans; see the Plan tab.'}` : ''}` : 'Add your monthly costs in Cash flow to size this.'}</p>
+          <p class="muted small" style="margin:10px 0 0">${ef.monthlyCosts ? `${ef.months} months × ${money(ef.monthlyCosts)} of costs. ${ef.runwayMonths != null ? `Your cash covers about <b>${ef.runwayMonths.toFixed(1)} months</b> of costs.` : ''}${cu.heldBack >= 100 ? ` <b>${money(cu.heldBack)}</b> above the goal is kept for ${cu.upcoming.length ? cu.upcoming.map(p => `${esc(p.label)} (${ymLabel(ym(p.month))})`).join(', ') : 'months where costs run past income'}.` : ''}${cu.amount >= 100 ? ` <b>${money(cu.amount)}</b> is safe to put toward loans${plan.useSpareCash ? ' and goes in this month as part of your plan.' : '; see the Plan tab.'}` : ''}` : 'Add your monthly costs in Cash flow to size this.'}</p>
         </section>
         <section class="card glass rise">
           <div class="card-h"><h2>Assumptions</h2><button class="btn soft" type="button" data-assume style="height:34px;font-size:13px">Edit</button></div>

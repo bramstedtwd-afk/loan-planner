@@ -60,3 +60,12 @@ test('no loans still produces a report', () => {
   const c = monthlyCheckin({ loans: [], payments: [], plan: {} }, [], { now: NOW });
   eq(c.snapshot.owed, 0); ok(c.title.includes('$0 owed'));
 });
+
+test('reminders flag a planned cost due soon and a planned loan that should have arrived', () => {
+  const d = data();
+  d.plan.planned = [{ id: 'tu', label: 'Spring tuition', amount: 3000, month: '2026-12' }, { id: 'far', label: 'Fall tuition', amount: 3000, month: '2027-08' }];
+  d.loans.push({ id: 'n', name: 'Fall unsub', kind: 'fed_unsub', balance: 2750, rate: 6.39, repayStart: '2026-12', asOf: '2026-08-01', disburseMonth: '2026-09' });
+  const keys = reminders(d, { now: NOW }).map(t => t.key);
+  ok(keys.includes('planned-tu') && !keys.includes('planned-far'), keys.join());
+  ok(keys.includes('arrived-n'), keys.join());
+});

@@ -6,6 +6,7 @@ const ACTIONS = [
   { key: 'balance', icon: 'i-money', title: 'Update a balance', sub: 'Bank, investing, retirement or a debt' },
   { key: 'income', icon: 'i-plan', title: 'Add income', sub: 'A job, internship or side gig' },
   { key: 'cost', icon: 'i-loans', title: 'Add monthly costs', sub: 'Rent, food, phone and the rest' },
+  { key: 'planned', icon: 'i-plan', title: 'Plan a one-time cost', sub: 'Tuition or anything due in a known month' },
   { key: 'lump', icon: 'i-spark', title: 'Add a one-time payment', sub: 'Tax refund, bonus or gift toward loans' },
 ];
 

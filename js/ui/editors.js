@@ -1,4 +1,4 @@
-// Add/edit sheets for income, monthly costs and one-time payments. Shared by the Wealth screen and the + quick actions.
+// Add/edit sheets for income, monthly costs, planned one-time costs and one-time payments. Shared by the Wealth screen and the + quick actions.
 import { ym, ymStr, ymLabel, toMonthly } from '../engine.js';
 import { money, todayISO } from '../format.js';
 import { formSheet } from './form-sheet.js';
@@ -89,6 +89,48 @@ export function makeEditors({ data, save, start }) {
     });
   };
 
+  // planned one-time costs: tuition or anything else you'll pay out of pocket in a known month
+  const planned = plan.planned || [];
+  const editPlanned = i => {
+    const isNew = i == null, s = isNew ? { label: '', month: ymStr(start + 2), amount: '' } : planned[i];
+    formSheet({
+      title: isNew ? 'Plan a one-time cost' : 'Edit planned cost',
+      intro: isNew ? 'Something you’ll pay out of pocket in a known month, like a semester’s tuition. The app keeps enough cash aside for it before suggesting any extra loan payments.' : '',
+      fields: [
+        { name: 'label', label: 'What is it', value: s.label, required: true, maxlength: 50, placeholder: 'Spring semester' },
+        { name: 'amount', label: 'Amount', type: 'number', value: s.amount, prefix: '$', min: 1, step: 1, required: true, half: true },
+        { name: 'month', label: 'Due', type: 'month', value: s.month, required: true, half: true },
+      ],
+      submitLabel: isNew ? 'Add' : 'Save',
+      onSubmit: v => {
+        const item = { ...s, id: s.id || `c${Date.now().toString(36)}`, label: v.label, amount: +v.amount, month: v.month, paidOn: s.paidOn || '' };
+        const list = isNew ? [...planned, item] : planned.map((x, k) => k === i ? item : x);
+        setList('planned', list, `${isNew ? 'Planned' : 'Updated'}: ${item.label} ${money(item.amount)} in ${ymLabel(ym(item.month))}`, `${item.label} ${isNew ? 'planned' : 'saved'}`);
+      },
+      onDelete: isNew ? null : () => setList('planned', planned.filter((_, k) => k !== i), `Removed planned cost: ${s.label}`, `${s.label} removed`),
+    });
+  };
+  // Paying it: record the date and take it out of the bank account it came from, so the cushion stays right.
+  const markPlannedPaid = i => {
+    const s = planned[i], banks = accounts.filter(a => a.kind === 'bank');
+    formSheet({
+      title: `Paid ${s.label}`,
+      fields: [
+        { name: 'amount', label: 'Amount paid', type: 'number', value: s.amount, prefix: '$', min: 0, step: 0.01, required: true, half: true },
+        { name: 'date', label: 'Paid on', type: 'date', value: todayISO(), required: true, half: true },
+        ...(banks.length ? [{ name: 'from', label: 'Paid from', hint: 'lowers that balance', type: 'select', value: banks.length === 1 ? banks[0].id : '',
+          options: [['', 'Don’t change any balance'], ...banks.map(a => [a.id, `${a.name} · ${money(+a.balance || 0)}`])] }] : []),
+      ],
+      submitLabel: 'Mark paid',
+      onSubmit: v => {
+        const item = { ...s, amount: +v.amount, paidOn: v.date };
+        const nextAccounts = v.from ? accounts.map(a => a.id === v.from ? withHistory(a, Math.round(((+a.balance || 0) - +v.amount) * 100) / 100, v.date) : a) : accounts;
+        save({ ...data, accounts: nextAccounts, plan: { ...plan, planned: planned.map((x, k) => k === i ? item : x) } },
+          `Paid ${item.label}: ${money(item.amount, true)} (${v.date})`, `${item.label} marked paid`);
+      },
+    });
+  };
+
   // accounts: every balance change also records a dated history entry
   const accounts = data.accounts || [];
   const withHistory = (a, balance, date) => ({ ...a, balance, updatedAt: date, history: [...(a.history || []).filter(h => h.date !== date), { date, balance }].sort((x, y) => x.date.localeCompare(y.date)) });
@@ -149,5 +191,5 @@ export function makeEditors({ data, save, start }) {
     });
   };
 
-  return { editIncome, editCost, editLump, editAccount, updateBalance, pickAccountToUpdate, INC_PRESETS, COST_PRESETS };
+  return { editIncome, editCost, editLump, editPlanned, markPlannedPaid, editAccount, updateBalance, pickAccountToUpdate, INC_PRESETS, COST_PRESETS };
 }

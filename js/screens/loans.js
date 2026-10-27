@@ -1,10 +1,10 @@
 // Loans: every loan with its balance, rate, minimum and payoff month; tap one to edit; add new ones; set graduation.
-import { ym, ymStr, ymLabel, isFed, KINDS, dailyInterest, cashFlow } from '../engine.js';
+import { ym, ymStr, ymLabel, isFed, KINDS, dailyInterest, cashFlow, isPending, owedNow } from '../engine.js';
 import { money, esc, pct, todayISO } from '../format.js';
 import { formSheet } from '../ui/form-sheet.js';
 import { header, subnav } from '../ui/layout.js';
 
-const owedOf = l => (+l.balance || 0) + (+l.unpaid || 0);
+const owedOf = l => owedNow(l);
 
 // What to send each servicer this month, and why the extra goes where it does.
 const WHY = { avalanche: 'Highest rate, so extra goes here first', snowball: 'Smallest balance, so extra goes here first', private: 'Private loan, cleared before federal', custom: 'First in your custom order' };
@@ -16,7 +16,7 @@ function thisMonthCard(data, r, start, colorOf) {
   const paying = data.loans.filter(l => row.pay[l.id] > 0.005);
   const idle = data.loans.filter(l => (row.bal[l.id] ?? 0) > 0.005 && !(row.pay[l.id] > 0.005));
   const idleRepay = idle.map(l => ym(l.repayStart)).filter(m => m != null && m > start);
-  const how = cf.inc.length ? `${money(cf.income)} in − ${money(cf.costs)} costs${cf.share < 100 ? ` × ${cf.share}%` : ''}${extra ? `, plus ${money(extra)} extra` : ''}${row.lump ? `, plus ${money(row.lump)} one-time` : ''}` : extra ? `Your ${money(extra)} monthly extra` : 'Only the minimums are due';
+  const how = cf.inc.length ? `${money(cf.income)} in − ${money(cf.costs + cf.oneTime)} costs${cf.share < 100 ? ` × ${cf.share}%` : ''}${extra ? `, plus ${money(extra)} extra` : ''}${row.lump ? `, plus ${money(row.lump)} one-time` : ''}` : extra ? `Your ${money(extra)} monthly extra` : 'Only the minimums are due';
   const monthName = new Date(Math.floor(start / 12), start % 12, 1).toLocaleDateString('en-US', { month: 'long' });
   const logged = (data.payments || []).filter(p => String(p.date).startsWith(ymStr(start))).reduce((s, p) => s + (+p.amount || 0), 0);
   const left = Math.max(0, row.paid - logged);
@@ -36,7 +36,7 @@ function thisMonthCard(data, r, start, colorOf) {
 
 export function renderLoans(view, ctx) {
   const { data, result: r, start, colorOf, save, onLogPayment } = ctx;
-  const loans = data.loans;
+  const loans = data.loans.filter(l => !isPending(l, start)), planned = data.loans.filter(l => isPending(l, start));
   const total = loans.reduce((s, l) => s + owedOf(l), 0);
   const orig = loans.reduce((s, l) => s + (+l.origBalance || owedOf(l)), 0);
   const avgRate = total ? loans.reduce((s, l) => s + owedOf(l) * (+l.rate || 0), 0) / total : 0;
@@ -44,6 +44,12 @@ export function renderLoans(view, ctx) {
   const rowFor = l => {
     const sl = r?.loans.find(x => x.id === l.id), owed = owedOf(l), o = +l.origBalance || owed;
     const repay = ym(l.repayStart);
+    if (isPending(l, start)) return `<button class="row" type="button" data-edit="${esc(l.id)}">
+      <span class="dotc" style="background:${colorOf(l.id)}"></span>
+      <div class="name"><b>${esc(l.name)}<span class="tag ${isFed(l.kind) ? 'fed' : ''}">${esc(KINDS[l.kind]?.short || l.kind)}</span><span class="tag">Planned</span></b>
+        <small>Arrives ${ymLabel(ym(l.disburseMonth))}${l.kind === 'fed_sub' && repay ? ` · no interest until ${ymLabel(repay)}` : ' · interest starts when it arrives'}</small></div>
+      <div class="right"><span class="amt num muted">${money(+l.balance || 0)}</span><span class="badge">${pct(l.rate)}</span></div>
+      <svg class="i chev" aria-hidden="true"><use href="#i-send"/></svg></button>`;
     const status = owed < 0.005 ? 'Paid off ✓'
       : repay != null && repay > start ? `${l.kind === 'fed_sub' ? 'No interest' : 'Interest building'} until ${ymLabel(repay)}`
       : sl?.paidOff != null && sl.paidOff >= start ? `On track to finish ${ymLabel(sl.paidOff)}` : 'Not paid off within 40 years';
@@ -74,15 +80,24 @@ export function renderLoans(view, ctx) {
         <div class="card-h"><h2>${t}</h2><span class="muted small num">${money(ls.reduce((s, l) => s + owedOf(l), 0))}</span></div>
         <div class="rows">${ls.map(rowFor).join('')}</div>
       </section>`).join('')}
+    ${planned.length ? `<section class="card glass rise">
+      <div class="card-h"><h2>Planned loans</h2><span class="muted small num">${money(planned.reduce((s, l) => s + (+l.balance || 0), 0))} coming</span></div>
+      <p class="muted small" style="margin:0 0 4px">Not owed yet. Your Plan, payoff date and interest already include them from the month they arrive.</p>
+      <div class="rows">${planned.map(rowFor).join('')}</div>
+    </section>` : ''}
     <section class="card glass rise">
       <div class="card-h"><h2>Add or update</h2></div>
       <p class="muted small" style="margin:0 0 12px">Copy balances from your servicer: studentaid.gov for federal loans, your lender’s site for private ones. Logging a payment updates the balance for you.</p>
-      <div class="add-row"><button class="btn primary" type="button" data-add>Add a loan</button><button class="btn soft" type="button" data-grad>${grad ? `Graduation: ${ymLabel(ym(grad))}` : 'Set graduation month'}</button></div>
+      <div class="add-row"><button class="btn primary" type="button" data-add>Add a loan</button><button class="btn soft" type="button" data-add-future>Plan a future loan</button><button class="btn soft" type="button" data-grad>${grad ? `Graduation: ${ymLabel(ym(grad))}` : 'Set graduation month'}</button></div>
     </section>`;
 
   view.querySelector('[data-add]').addEventListener('click', () => editLoan(null));
+  view.querySelector('[data-add-future]').addEventListener('click', () => {
+    const y = Math.floor(start / 12), next = start % 12 < 7 ? y * 12 + 7 : (y + 1) * 12; // the next August or January
+    editLoan(null, { kind: 'fed_unsub', disburseMonth: ymStr(next), asOf: `${ymStr(next)}-01`, repayStart: grad ? ymStr(ym(grad) + 6) : '' });
+  });
   view.querySelector('[data-log]')?.addEventListener('click', onLogPayment);
-  view.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => editLoan(loans.find(l => l.id === b.dataset.edit))));
+  view.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => editLoan(data.loans.find(l => l.id === b.dataset.edit))));
   view.querySelector('[data-grad]').addEventListener('click', () => {
     formSheet({
       title: 'Graduation month',
@@ -97,26 +112,31 @@ export function renderLoans(view, ctx) {
     });
   });
 
-  function editLoan(l) {
+  function editLoan(l, preset) {
     const isNew = !l;
-    l = l || { kind: 'fed_unsub', asOf: todayISO(), repayStart: grad ? ymStr(ym(grad) + 6) : '' };
+    l = l || preset || { kind: 'fed_unsub', asOf: todayISO(), repayStart: grad ? ymStr(ym(grad) + 6) : '' };
+    const future = isPending(l, start), arrived = !isNew && l.disburseMonth && !future;
     formSheet({
-      title: isNew ? 'Add a loan' : 'Edit loan',
+      title: isNew ? (future ? 'Plan a future loan' : 'Add a loan') : arrived ? `Confirm ${l.name}` : 'Edit loan',
+      intro: future ? 'A loan you expect to take, like next semester’s federal loan. It counts as $0 until the month it arrives. Use the amount you’ll owe (before the origination fee comes out).'
+        : arrived ? `This loan was planned to arrive in ${ymLabel(ym(l.disburseMonth))}. Check the amount and rate on studentaid.gov, then save to confirm it.` : '',
       fields: [
         { name: 'name', label: 'Name', value: l.name, required: true, maxlength: 60, placeholder: 'Direct Unsub 2025' },
         { name: 'servicer', label: 'Servicer or lender', value: l.servicer, half: true, maxlength: 60, placeholder: 'MOHELA' },
         { name: 'kind', label: 'Type', type: 'select', value: l.kind, half: true, options: Object.entries(KINDS).map(([k, v]) => [k, v.label]) },
-        { name: 'balance', label: 'Principal', type: 'number', value: l.balance, prefix: '$', min: 0, step: 0.01, required: true, half: true },
+        { name: 'balance', label: future ? 'Amount' : 'Principal', type: 'number', value: l.balance, prefix: '$', min: 0, step: 0.01, required: true, half: true },
         { name: 'unpaid', label: 'Unpaid interest', type: 'number', value: l.unpaid || 0, prefix: '$', min: 0, step: 0.01, half: true },
-        { name: 'rate', label: 'Interest rate', type: 'number', value: l.rate, suffix: '%', min: 0, max: 40, step: 0.001, required: true, half: true },
+        { name: 'rate', label: 'Interest rate', hint: future ? 'new loans get the rate set each July' : '', type: 'number', value: l.rate, suffix: '%', min: 0, max: 40, step: 0.001, required: true, half: true },
         { name: 'minPayment', label: 'Monthly minimum', hint: 'blank = estimate', type: 'number', value: l.minPayment || '', prefix: '$', min: 0, step: 0.01, half: true },
         { name: 'termMonths', label: 'Repayment term', hint: 'months', type: 'number', value: l.termMonths || '', min: 1, max: 360, step: 1, placeholder: '120', half: true },
         { name: 'repayStart', label: 'Repayment starts', type: 'month', value: l.repayStart, half: true },
         { name: 'asOf', label: 'Balance as of', type: 'date', value: l.asOf, half: true, required: true },
+        { name: 'disburseMonth', label: 'Arrives', hint: 'future loans only', type: 'month', value: future ? l.disburseMonth : '', half: true },
         { name: 'notes', label: 'Notes', value: l.notes, maxlength: 160, placeholder: 'Variable rate, autopay on…' },
       ],
       submitLabel: isNew ? 'Add loan' : 'Save',
       onSubmit: v => {
+        if (v.disburseMonth && ym(v.disburseMonth) > start && +v.unpaid > 0) return 'A loan that hasn’t arrived yet can’t have unpaid interest.';
         const loan = { ...l, ...v, balance: +v.balance || 0, unpaid: +v.unpaid || 0, rate: +v.rate || 0, minPayment: +v.minPayment || 0, termMonths: Math.round(+v.termMonths || 0) };
         if (isNew) { loan.id = `l${Date.now().toString(36)}`; loan.order = Math.max(0, ...data.loans.map(x => x.order ?? 0)) + 1; }
         loan.origBalance = Math.max(+l.origBalance || 0, loan.balance + loan.unpaid);
