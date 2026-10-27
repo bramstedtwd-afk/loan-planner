@@ -144,7 +144,8 @@ test('the cushion holds back cash for a planned cost, so nothing is "spare" yet'
   eq(emergencyFund(d.accounts, d.plan, START).target, 3600, 'the one-time cost does not inflate the emergency fund;');
   eq(spareCash(d, START), 0);
   const a = monthAction(d, START);
-  eq(a.kind, 'keep'); ok(/Keep your savings/.test(a.detail) && /Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
+  eq(a.kind, 'over', 'January leaves cash $253 under the cushion, so: pay only what is due and save;');
+  ok(/\$253 below/.test(a.detail) && /Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
 });
 
 test('with enough cash, only what is left after the cushion and the planned cost is safe', () => {
@@ -171,8 +172,17 @@ test('a future loan is not counted as owed yet', () => {
 test('when the plan’s extra would eat into the cushion, this month says what to send instead', () => {
   const d = { loans: loans(), plan: plan({ extraMonthly: 250, planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 5000)] };
   const a = monthAction(d, START);
-  eq(a.kind, 'over'); ok(/^Send \$800 this month, not \$1,050$/.test(a.title), a.title);
+  eq(a.kind, 'over'); ok(/^Send just the \$\d+ due this month and save \$\d+/.test(a.title), a.title);
+  ok(a.comfy < 300 && a.keep > 500, `${a.comfy} / ${a.keep}`);
   ok(/Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
   const fine = monthAction({ ...d, accounts: [acct('c', 'bank', 20000)] }, START);
   ok(fine.kind !== 'over', fine.kind);
+});
+
+test('if a planned cost breaks the cushion even with no extra, this month says to pay only what is due and save', () => {
+  const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 4000)] };
+  const a = monthAction(d, START);
+  eq(a.kind, 'over'); ok(/below your \$3,600 emergency fund/.test(a.detail), a.detail);
+  ok(/Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
+  ok(monthAction({ ...d, accounts: [acct('c', 'bank', 7000)] }, START).kind !== 'over', 'enough cash covers both');
 });

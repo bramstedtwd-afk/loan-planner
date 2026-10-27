@@ -66,11 +66,18 @@ export function monthAction(data, start = nowYM()) {
     lines.push(`You could also safely put ${money(c.amount)} of savings toward loans now and still keep your emergency fund${c.upcoming.length ? ` and what’s planned` : ''}.`);
     return { ...out, kind: 'can-use-savings', title: `Send ${money(pay)} this month; ${money(c.amount)} more is safe to add`, detail: lines.join(' '), action: { label: 'See the plan', href: '#plan' } };
   }
-  if (fromSavings > 0.5 && c.room < 0) {
-    const comfy = Math.max(fromIncome, mins);
-    return { ...out, kind: 'over', title: `Send ${money(comfy)} this month, not ${money(pay)}`,
-      detail: `${money(comfy)} is what this month’s income covers${comfy > fromIncome + 0.5 ? ' (the minimums)' : ''}. Your plan’s extra would take ${money(fromSavings)} from savings, but your cash can’t spare it: it has to keep your ${money(c.target)} emergency fund${c.upcoming.length ? ` and cover ${due.join(', ')}` : ' through months where costs run past income'}, and it falls about ${money(-c.room)} short by ${ymLabel(c.low.m)}. Lower the extra on the Plan tab so the plan matches.`,
-      action: { label: 'Adjust the plan', href: '#plan' } };
+  // Short of the cushion even before any extra: pay only what's due and keep the rest of this month's income as savings.
+  if (c.room < 0 && pay > mins + 0.5) {
+    // Measure the gap without the plan's own extra from savings, since the advice is to stop that.
+    const g = +plan.extraMonthly > 0 ? cushion({ ...data, plan: { ...plan, extraMonthly: 0 } }, start) : c;
+    const gap = Math.max(0, -g.room), keep = Math.max(0, fromIncome - mins), months = keep > 0.5 && gap > 0 ? Math.ceil(gap / keep) : null;
+    const why = gap > 0
+      ? `${g.upcoming.length ? `After ${due.join(', ')}, your` : 'Your'} cash would drop to about ${money(Math.max(0, g.low.cash))} in ${ymLabel(g.low.m)}, ${money(gap)} below your ${money(c.target)} emergency fund.`
+      : `Your plan’s extra would pull your cash below your ${money(c.target)} emergency fund${c.upcoming.length ? ` once ${due.join(', ')} is paid` : ''}.`;
+    return { ...out, kind: 'over', comfy: mins, keep,
+      title: mins > 0.5 ? `Send just the ${money(mins)} due this month${keep > 0.5 ? ` and save ${money(keep)}` : ''}` : `Don’t send extra this month${keep > 0.5 ? `; save the ${money(keep)}` : ''}`,
+      detail: `${why} ${keep > 0.5 ? `Keeping this month’s ${money(keep)} in savings instead of paying extra rebuilds that cushion${months ? `; at this pace it takes about ${months} month${months === 1 ? '' : 's'}` : ''}. ` : ''}${fromSavings > 0.5 ? `Your plan also takes ${money(fromSavings)} a month from savings for extra payments, which would make the gap bigger. ` : ''}Extra loan payments make sense again once the cushion is covered. To make the plan match, lower “Send to loans” in Wealth → Cash flow or the extra on the Plan tab.`,
+      action: { label: 'Adjust the plan', href: '#cashflow' } };
   }
   if (fromSavings > 0.5) lines.push(`Taking that from savings is fine: your cash still covers your ${money(c.target)} emergency fund${c.upcoming.length ? ` and ${due.join(', ')}` : ''}.`);
   else if (c.heldBack >= 100) lines.push(`Keep your savings for now. You have ${money(c.heldBack)} above your emergency fund, and it’s spoken for. ${keepWhy}`);
