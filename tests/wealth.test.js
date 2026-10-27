@@ -1,6 +1,6 @@
 // Wealth math tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { netWorth, emergencyFund, recommendRoute, nextDollar } from '../js/wealth.js';
+import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan } from '../js/wealth.js';
 import { defaultPlan, ym, simulate } from '../js/engine.js';
 
 const START = ym('2026-10');
@@ -32,7 +32,7 @@ test('the best route uses what is left after costs plus cash above the emergency
   eq(rec.monthly, 800, 'income − costs;');
   eq(rec.emergency.target, 3600); eq(rec.lumpNow, 2100, 'surplus 2,130 rounded down to $50;');
   eq(rec.plan.extraMonthly, 0); eq(rec.plan.share, 100);
-  ok(rec.plan.lumps.some(l => l.amount === 2100 && l.month === '2026-10'), 'cash goes in this month');
+  ok(effectivePlan({ loans: loans(), plan: rec.plan, accounts: [acct('c', 'bank', 5730)] }, START).lumps.some(l => l.amount === 2100 && l.month === '2026-10'), 'cash goes in this month');
   ok(rec.result.done, 'pays off');
   for (const id of Object.keys(rec.results)) if (id !== 'minimum' && rec.results[id].done) ok(rec.result.totalInterest <= rec.results[id].totalInterest + 1, `best beats ${id}`);
 });
@@ -67,10 +67,24 @@ test('no spare cash means no lump sum, and cash is never more than what is owed'
   eq(rich.lumpNow, 1000);
 });
 
+test('applying the route uses spare cash live, so it is never counted twice', () => {
+  const d = { loans: loans(), plan: plan(), accounts: [acct('c', 'bank', 5730)] };
+  const first = recommendRoute(d, opts);
+  eq(first.plan.useSpareCash, true); eq(first.plan.lumps.length, 0, 'no stored payment;');
+  const applied = { ...d, plan: first.plan };
+  eq(effectivePlan(applied, START).lumps[0].amount, 2100, 'spare cash goes in this month;');
+  const again = recommendRoute(applied, opts);
+  near(again.result.totalInterest, first.result.totalInterest, 1e-6, 'same route after applying;');
+  near(again.current.totalInterest, first.result.totalInterest, 1e-6, 'your plan now matches it;');
+  // You pay the $2,100 and your bank balance drops: spare cash is gone, nothing is counted twice.
+  const paid = { ...applied, accounts: [acct('c', 'bank', 3630)] };
+  eq(spareCash(paid, START), 0); eq(effectivePlan(paid, START).lumps.length, 0);
+});
+
 test('the recommended plan reproduces the projected result', () => {
   const d = { loans: loans(), plan: plan(), accounts: [acct('c', 'bank', 5000)] };
   const rec = recommendRoute(d, opts);
-  near(simulate(d.loans, rec.plan, rec.best, opts).totalInterest, rec.result.totalInterest, 1e-6);
+  near(simulate(d.loans, effectivePlan({ ...d, plan: rec.plan }, START), rec.best, opts).totalInterest, rec.result.totalInterest, 1e-6);
 });
 
 test('next dollar: emergency fund first when it is short', () => {

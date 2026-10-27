@@ -1,163 +1,156 @@
-// Plan: pick a strategy, try extra payments, see the whole timeline, and compare every option.
-import { ym, ymLabel, MON, STRATEGIES, simulate, simulateAll, interestMoves, applyMove, extraCurve, yearlySummary, migratePlan } from '../engine.js';
+// Plan: the best route to debt-free given your income, costs and cash, why it wins, and what would change it.
+import { ym, ymLabel, MON, STRATEGIES, simulate, simulateAll, interestMoves, applyMove, extraCurve, yearlySummary, migratePlan, cashFlow } from '../engine.js';
+import { recommendRoute, effectivePlan } from '../wealth.js';
 import { money, dur, esc, pct } from '../format.js';
 import { stackedBalance, paymentBars, raceLines, extraCurveChart, legend } from '../charts.js';
 import { formSheet } from '../ui/form-sheet.js';
 import { header } from '../ui/layout.js';
 
+const VIEWS = [['balance', 'Balance'], ['payments', 'Payments'], ['interest', 'Interest'], ['extra', 'Extra']];
+let chartView = 'balance'; // remembered while the app is open
+
 export function renderPlan(view, ctx) {
   const { data, start, colorOf, save } = ctx;
-  const plan = data.plan, loans = data.loans;
+  const plan = data.plan, loans = data.loans, opts = { start };
+  const rec = recommendRoute(data, opts);
   const st = STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
-  const opts = { start };
-  const all = simulateAll(loans, plan, opts), r = all[st], base = all.minimum;
+  const ep = effectivePlan(data, start); // the stored plan as simulated, with spare cash when it's on
+  const all = simulateAll(loans, ep, opts), r = all[st], base = all.minimum;
+  const best = rec.result, name = id => STRATEGIES.find(s => s.id === id)?.name || id;
+  const override = plan.strategyOverride && plan.strategyOverride !== rec.best ? plan.strategyOverride : null;
+  const onRoute = Math.abs(r.totalInterest - best.totalInterest) < 1 && r.payoffM === best.payoffM;
   const grad = ym(plan.gradMonth);
-  const moves = interestMoves(loans, plan, st, opts);
-  const extra = +plan.extraMonthly || 0;
-  const curveMax = Math.max(1000, Math.ceil(extra * 1.5 / 100) * 100);
-  const curve = extraCurve(loans, plan, st, { ...opts, max: curveMax, steps: 20 });
-  const best = STRATEGIES.filter(s => all[s.id].done).reduce((b, s) => !b || all[s.id].totalInterest < all[b].totalInterest - 0.5 ? s.id : b, null);
-  const stratName = id => STRATEGIES.find(s => s.id === id).name;
-  const customIds = (() => { const ids = (plan.customOrder || []).filter(id => loans.some(l => l.id === id)); for (const l of loans) if (!ids.includes(l.id)) ids.push(l.id); return ids; })();
-  const summaryHtml = res => {
-    const saved = base.totalInterest - res.totalInterest;
-    return `<div class="tile"><span>Debt-free</span><b class="num">${res.done ? ymLabel(res.payoffM) : 'Not yet'}</b></div>
-      <div class="tile"><span>Interest you’ll pay</span><b class="num">${money(res.totalInterest)}</b></div>
-      <div class="tile accent"><span>Saved vs. minimums</span><b class="num">${st === 'minimum' ? '—' : money(saved)}</b></div>
-      <div class="tile"><span>Total you’ll pay</span><b class="num">${money(res.totalPaid)}</b></div>`;
-  };
+  const cf = cashFlow(plan, start);
+  const focus = loans.find(l => l.id === rec.focusLoanId);
+  const nextUp = rec.order.filter(o => o.id !== rec.focusLoanId)[0];
+  const ef = rec.emergency, hasCash = (data.accounts || []).some(a => a.kind === 'bank');
+
+  const steps = [
+    focus ? { t: `${esc(focus.name)} first`, s: `${pct(focus.rate)}${+focus.rate >= Math.max(...loans.map(l => +l.rate)) ? ', your highest rate' : ''}. Extra money goes here until it’s gone${nextUp ? `, then to ${esc(nextUp.name)}` : ''}.` } : null,
+    { t: `Send ${money(rec.monthly)} a month`, s: cf.inc.length ? `Everything left after costs: ${money(cf.income)} in − ${money(cf.costs)} costs.` : 'Add your income and costs on the Wealth tab to size this.' },
+    rec.lumpNow > 0 ? { t: `Put ${money(rec.lumpNow)} of savings in now`, s: `${plan.useSpareCash ? 'Part of your plan this month. When you pay it, log it and take it out of your bank balance. ' : ''}You keep ${money(ef.target)} (${ef.months} months of costs) as your emergency fund.` }
+      : hasCash ? { t: 'Keep your savings where they are', s: ef.target ? `Your ${money(ef.cash)} in cash is ${ef.funded ? 'at' : 'under'} your ${money(ef.target)} emergency fund${ef.funded ? ', with nothing extra to spare yet' : ''}.` : 'Add monthly costs to size your emergency fund.' }
+      : { t: 'Add your bank balance', s: 'Cash above your emergency fund could go in now. <a href="#accounts">Add it on the Wealth tab</a>.', html: true },
+  ].filter(Boolean);
+
+  const curveMax = Math.max(1000, Math.ceil((+plan.extraMonthly || 0) * 1.5 / 100) * 100);
+  const moves = interestMoves(loans, ep, st, opts);
   const years = yearlySummary(r.rows);
   const sc = [...(data.scenarios || [])].sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
-  const maxInt = Math.max(...STRATEGIES.map(s => all[s.id].totalInterest), 1);
 
   view.innerHTML = `
     ${header({ title: 'Plan' })}
+    ${override ? `<div class="banner glass"><p>You’re using <b>${name(override)}</b> instead of the recommended <b>${name(rec.best)}</b>.</p><button class="btn soft" type="button" data-use-best>Back to recommended</button></div>` : ''}
 
-    <section class="card glass rise">
-      <div class="tiles" data-summary>${summaryHtml(r)}</div>
-      ${r.shortfalls && st !== 'minimum' ? `<p class="err" style="margin-top:12px">Your income doesn’t cover the minimums in ${r.shortfalls} month${r.shortfalls > 1 ? 's' : ''}, starting ${ymLabel(r.firstShortfall)}. The plan assumes you pay them anyway.</p>` : ''}
+    <section class="hero rise" aria-label="Best route">
+      <div class="k"><span>Best route</span><span class="chip">${esc(rec.name)}</span>${onRoute ? '<span class="chip">✓ You’re on it</span>' : ''}</div>
+      <div class="when num">${best.done ? ymLabel(best.payoffM) : 'Not yet'}</div>
+      <p class="sub">${best.done ? `${dur(best.payoffM - start)} away · ${money(best.totalInterest)} interest` : 'Payments don’t cover the interest yet. Add income on the Wealth tab.'}</p>
+      <ol class="route">${steps.map((x, i) => `<li><span class="n">${i + 1}</span><div><b>${x.t}</b><small>${x.html ? x.s : x.s}</small></div></li>`).join('')}</ol>
+      ${onRoute ? '' : `<div class="route-cta"><button class="btn primary" type="button" data-use-route>Use this route</button>
+        <small>Your settings now: ${r.done ? `debt-free ${ymLabel(r.payoffM)} · ${money(r.totalInterest)} interest` : 'not paid off'}${rec.relyOnSavings ? ` · sends ${money(rec.currentMonthly)}/mo, ${money(rec.currentMonthly - rec.monthly)} more than is left after costs` : ''}</small></div>`}
     </section>
 
-    <section class="card glass rise">
-      <div class="card-h"><h2>Strategy</h2>${best && best !== st ? `<button class="badge warn" type="button" data-use="${best}">${stratName(best)} is cheaper · switch</button>` : best === st ? '<span class="badge">Cheapest option</span>' : ''}</div>
-      <div class="seg scroll" role="radiogroup" aria-label="Payoff strategy">${STRATEGIES.map(s => `<label><input type="radio" name="strategy" value="${s.id}" ${s.id === st ? 'checked' : ''}><span>${s.name}</span></label>`).join('')}</div>
-      <p class="muted small" style="margin:10px 0 4px">${esc(STRATEGIES.find(s => s.id === st).desc)}</p>
-      ${st === 'custom' ? `<div class="order">${customIds.map((id, i) => { const l = loans.find(x => x.id === id); return `<div class="order-item"><span class="dotc" style="background:${colorOf(id)}"></span><span class="nm">${i + 1}. ${esc(l.name)} <span class="muted small">${pct(l.rate)}</span></span><button type="button" data-mv="${i}" data-d="-1" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button><button type="button" data-mv="${i}" data-d="1" aria-label="Move down" ${i === customIds.length - 1 ? 'disabled' : ''}>↓</button></div>`; }).join('')}</div>` : ''}
-      <div class="slider" style="margin-top:12px">
-        <div class="top"><b>Extra each month</b><output data-extra-out>+${money(extra)}</output></div>
-        <input type="range" min="0" max="${curveMax}" step="25" value="${extra}" data-extra aria-label="Extra payment each month">
-        <small>On top of your earnings plan. Drag to preview; it saves when you let go.</small>
-      </div>
-      <label class="switch"><span class="name"><b>Autopay discount</b><small>Most servicers take 0.25% off your rate with autopay</small></span><input type="checkbox" data-autopay ${plan.autopay ? 'checked' : ''}></label>
-      <label class="switch"><span class="name"><b>What if I refinance private loans?</b><small>${plan.refi?.on ? `Private loans modeled at ${pct(plan.refi.rate)}` : 'Model a lower rate on your private loans'}</small></span><input type="checkbox" data-refi ${plan.refi?.on ? 'checked' : ''}></label>
-      ${plan.refi?.on ? `<div class="field" style="max-width:220px;margin-top:4px"><span>Refinanced rate</span><span class="affix"><input type="number" inputmode="decimal" step="0.05" min="0" max="30" value="${plan.refi.rate}" data-refi-rate aria-label="Refinanced rate"><b>%</b></span></div>` : ''}
-    </section>
+    ${!onRoute && rec.relyOnSavings && r.payoffM != null && best.payoffM != null && r.payoffM < best.payoffM ? `
+    <section class="card glass rise"><div class="card-h"><h2>Why your settings finish sooner</h2></div>
+      <p class="muted" style="margin:0">They send ${money(rec.currentMonthly)} a month, but only ${money(rec.monthly)} is left after costs, so about ${money(rec.currentMonthly - rec.monthly)} a month would have to come from savings. The best route only uses money it can see.${hasCash ? '' : ' Add your bank balance so it can count spare cash above your emergency fund.'}</p>
+      ${hasCash ? '' : '<div class="add-row"><a class="btn soft" href="#accounts">Add bank balance</a></div>'}</section>` : ''}
+
+    <details class="card glass rise why" ${override ? 'open' : ''}>
+      <summary><h2>Why this route</h2><span class="muted small">Compare ${rec.alternatives.length} other options</span></summary>
+      <div class="alts">${rec.alternatives.map(a => `
+        <div class="alt"><div class="alt-h"><b>${esc(a.name)}</b><span class="${a.deltaInterest > 1 ? 'neg' : 'pos'} num">${a.deltaInterest > 1 ? `+${money(a.deltaInterest)}` : a.deltaInterest < -1 ? `−${money(-a.deltaInterest)}` : 'Same cost'}</span></div>
+          <p>${esc(a.why)}</p><small>${esc(a.cost)} ${a.result.done ? `Debt-free ${ymLabel(a.result.payoffM)}.` : ''}</small>
+          ${a.id !== 'minimum' ? `<button class="btn soft" type="button" data-use-alt="${a.id}">Use ${esc(a.name)} instead</button>` : ''}</div>`).join('')}</div>
+    </details>
 
     <section class="card glass rise">
-      <div class="card-h"><h2>Balance over time</h2><span class="muted small">${r.done ? `${ymLabel(r.start)} – ${ymLabel(r.payoffM)}` : ''}</span></div>
-      <div class="legend">${legend([...loans.slice(0, 8).map(l => ({ name: l.name, color: colorOf(l.id) })), ...(st !== 'minimum' ? [{ name: 'Minimums only (total)', dash: true }] : [])])}</div>
-      <div class="chartbox" data-balance></div>
-      ${st !== 'minimum' && r.done ? `<p class="section-note">Paying only the minimums, you’d still owe ${money(base.rows.find(x => x.m === r.payoffM)?.total ?? base.initTotal)} when this plan finishes${base.done ? `, and wouldn’t be done until ${ymLabel(base.payoffM)}` : ''}.</p>` : ''}
+      <div class="card-h"><h2>Your plan over time</h2><span class="muted small">${r.done ? `${ymLabel(r.start)} – ${ymLabel(r.payoffM)}` : ''}</span></div>
+      <div class="seg chart-switch" role="tablist" aria-label="Chart">${VIEWS.map(([k, t]) => `<button type="button" role="tab" data-view="${k}" aria-selected="${k === chartView}">${t}</button>`).join('')}</div>
+      <div class="legend" data-legend></div>
+      <div class="chips" data-chips hidden></div>
+      <div class="chartbox" data-chart></div>
+      <p class="section-note" data-note></p>
     </section>
 
     <section class="card glass rise moves">
-      <div class="card-h"><h2>Fastest ways to cut interest</h2><span class="muted small">Biggest savings first</span></div>
+      <div class="card-h"><h2>Ways to cut more interest</h2><span class="muted small">On top of your current settings</span></div>
       <div class="rows">${moves.length ? moves.map((m, i) => `
         <div class="row"><span class="rank">${i + 1}</span><div class="name"><b>${esc(m.title)}</b><small>${esc(m.detail)}</small></div>
           <div class="right"><span class="save num">${money(m.saved)}</span><small class="muted">${m.result.done ? ymLabel(m.result.payoffM) : 'Not yet'}${m.sooner > 0 ? ` · ${dur(m.sooner)} sooner` : ''}</small><button class="btn soft" type="button" data-move="${i}">Apply</button></div></div>`).join('')
         : '<p class="muted" style="margin:0">Your plan already covers every move this app can test.</p>'}</div>
     </section>
 
-    <section class="card glass rise">
-      <div class="card-h"><h2>What paying more buys you</h2><span class="muted small">Tap an amount or the chart</span></div>
-      <div class="chips">${[100, 250, 500, 1000].map(a => { const p = curve.find(c => c.extra === a) || (() => { const x = simulate(loans, { ...plan, extraMonthly: a }, st === 'minimum' ? 'avalanche' : st, opts); return { interest: x.totalInterest, done: x.done, payoffM: x.payoffM, months: x.months }; })();
-        return `<button class="chip-b" type="button" data-setextra="${a}" aria-pressed="${extra === a}"><span>+${money(a)} a month</span><b>saves ${money(curve[0].interest - p.interest)}</b><small>${p.done ? `Debt-free ${ymLabel(p.payoffM)}` : 'Not paid off'}${curve[0].done && p.done && curve[0].months - p.months > 0 ? ` · ${dur(curve[0].months - p.months)} sooner` : ''}</small></button>`; }).join('')}</div>
-      <div class="chartbox" data-curve></div>
-    </section>
-
-    <div class="board" style="grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))">
-      <section class="card glass rise">
-        <div class="card-h"><h2>Monthly payments</h2><span class="muted small">${r.rows.length ? `Peak ${money(Math.max(...r.rows.map(x => x.paid)))}` : ''}</span></div>
-        <div class="legend">${legend(loans.filter(l => r.rows.some(x => x.pay[l.id])).slice(0, 8).map(l => ({ name: l.name, color: colorOf(l.id) })))}</div>
-        <div class="chartbox" data-pay></div>
-      </section>
-      <section class="card glass rise">
-        <div class="card-h"><h2>Interest piling up</h2><span class="muted small">By strategy</span></div>
-        <div class="legend">${legend([{ name: `${stratName(st)} (yours)`, color: 'var(--accent)' }, { name: 'Other strategies', color: 'var(--ink-3)' }, ...(st !== 'minimum' ? [{ name: 'Minimums only', dash: true }] : [])])}</div>
-        <div class="chartbox" data-race></div>
-      </section>
-    </div>
-
-    <section class="card glass rise">
-      <div class="card-h"><h2>Compare strategies</h2><span class="muted small">Same income, different order</span></div>
-      <div class="cmp">${STRATEGIES.map(s => { const x = all[s.id], d = base.totalInterest - x.totalInterest;
-        return `<button class="cmp-row ${s.id === st ? 'on' : ''}" type="button" data-use="${s.id}" aria-pressed="${s.id === st}"><span class="nm">${s.name}${s.id === best ? ' <span class="tag fed">Cheapest</span>' : ''}</span>
-          <span class="bar2"><i style="width:${(x.totalInterest / maxInt * 100).toFixed(1)}%"></i></span>
-          <span class="val"><b>${money(x.totalInterest)}</b><small>${x.done ? ymLabel(x.payoffM) : 'Never'}${s.id !== 'minimum' && d > 0.5 ? ` · saves ${money(d)}` : ''}</small></span></button>`; }).join('')}</div>
-    </section>
-
-    <section class="card glass rise">
-      <div class="card-h"><h2>Full timeline</h2><span class="muted small">${r.rows.length} months · tap a year</span></div>
-      <div class="yr-head"><span>Year</span><span>Paid</span><span>Interest</span><span>Owed at end</span></div>
-      ${years.map((y, yi) => `<details class="yr" ${yi === 0 ? 'open' : ''}><summary><span>${y.year}</span><span>${money(y.paid)}</span><span>${money(y.interestPaid)}</span><span>${money(y.endBalance)}</span></summary>
-        ${y.rows.map(x => { const who = loans.filter(l => x.pay[l.id] > 0.5).sort((a, b) => x.pay[b.id] - x.pay[a.id]);
-          return `<div class="mrow"><span>${MON[x.m % 12]}${x.lump ? ' <span class="tag now">+lump</span>' : ''}</span><span class="who">${who.length ? who.slice(0, 2).map(l => `<i style="background:${colorOf(l.id)}"></i>${esc(l.name.split(' · ')[0])} ${money(x.pay[l.id])}`).join(' · ') + (who.length > 2 ? ` · +${who.length - 2} more` : '') : 'Nothing due'}</span><b>${money(x.paid)}</b></div>`; }).join('')}</details>`).join('')}
-      ${r.done ? '' : `<p class="err" style="margin-top:10px">Stops at 40 years with ${money(r.rows[r.rows.length - 1]?.total || 0)} still owed.</p>`}
-    </section>
+    <details class="card glass rise">
+      <summary><h2>Assumptions</h2><span class="muted small">${plan.autopay ? 'Autopay on' : 'Autopay off'}${plan.refi?.on ? ` · refinance at ${pct(plan.refi.rate)}` : ''}</span></summary>
+      <label class="switch"><span class="name"><b>Autopay discount</b><small>Most servicers take 0.25% off your rate with autopay</small></span><input type="checkbox" data-autopay ${plan.autopay ? 'checked' : ''}></label>
+      <label class="switch"><span class="name"><b>What if I refinance private loans?</b><small>${plan.refi?.on ? `Private loans modeled at ${pct(plan.refi.rate)}` : 'Model a lower rate on your private loans'}</small></span><input type="checkbox" data-refi ${plan.refi?.on ? 'checked' : ''}></label>
+      ${plan.refi?.on ? `<div class="field" style="max-width:220px;margin-top:4px"><span>Refinanced rate</span><span class="affix"><input type="number" inputmode="decimal" step="0.05" min="0" max="30" value="${plan.refi.rate}" data-refi-rate aria-label="Refinanced rate"><b>%</b></span></div>` : ''}
+    </details>
 
     <section class="card glass rise">
       <div class="card-h"><h2>Saved scenarios</h2><button class="btn soft" type="button" data-save-scn style="height:36px;font-size:13.5px">Save this plan</button></div>
-      <div class="rows">${sc.length ? sc.map(s => { const p = migratePlan(s.plan || {}); const now = simulate(loans, p, p.strategy, opts);
-        return `<div class="row"><div class="name"><b>${esc(s.name)}</b><small>${stratName(p.strategy) || ''} · ${p.incomes.length} income source${p.incomes.length === 1 ? '' : 's'} · +${money(+p.extraMonthly || 0)}/mo extra · saved ${esc((s.savedAt || '').slice(0, 10))}</small></div>
+      <div class="rows">${sc.length ? sc.map(s => { const p = migratePlan(s.plan || {}); const now = simulate(loans, effectivePlan({ ...data, plan: p }, start), p.strategy, opts);
+        return `<div class="row"><div class="name"><b>${esc(s.name)}</b><small>${name(p.strategy)} · ${p.incomes.length} income source${p.incomes.length === 1 ? '' : 's'}${+p.extraMonthly ? ` · +${money(+p.extraMonthly)}/mo` : ''} · saved ${esc((s.savedAt || '').slice(0, 10))}</small></div>
           <div class="right"><span class="amt num">${now.done ? ymLabel(now.payoffM) : 'Never'}</span><small class="muted">${money(now.totalInterest)} interest</small>
           <span style="display:flex;gap:4px"><button class="btn soft" type="button" data-load="${esc(s.id)}" style="height:32px;font-size:13px;padding:0 10px">Load</button><button class="btn soft danger" type="button" data-del="${esc(s.id)}" style="height:32px;font-size:13px;padding:0 10px">Delete</button></span></div></div>`; }).join('')
         : '<p class="muted small" style="margin:0">Save your plan before trying a different job offer or budget, then compare here. Each scenario is re-run against your current loans.</p>'}</div>
-    </section>`;
+    </section>
 
-  // charts
-  const draws = [
-    stackedBalance(view.querySelector('[data-balance]'), r, st === 'minimum' ? null : base, loans, colorOf, { grad }),
-    paymentBars(view.querySelector('[data-pay]'), r, loans, colorOf, { grad }),
-    raceLines(view.querySelector('[data-race]'), all, st, STRATEGIES),
-    extraCurveChart(view.querySelector('[data-curve]'), curve, extra, a => setPlan({ extraMonthly: a }, `Extra set to ${money(a)} a month`)),
-  ];
+    <details class="card glass rise">
+      <summary><h2>Full timeline</h2><span class="muted small">${r.rows.length} months, year by year</span></summary>
+      <div class="yr-head"><span>Year</span><span>Paid</span><span>Interest</span><span>Owed at end</span></div>
+      ${years.map(y => `<details class="yr"><summary><span>${y.year}</span><span>${money(y.paid)}</span><span>${money(y.interestPaid)}</span><span>${money(y.endBalance)}</span></summary>
+        ${y.rows.map(x => { const who = loans.filter(l => x.pay[l.id] > 0.5).sort((a, b) => x.pay[b.id] - x.pay[a.id]);
+          return `<div class="mrow"><span>${MON[x.m % 12]}${x.lump ? ' <span class="tag now">+lump</span>' : ''}</span><span class="who">${who.length ? who.slice(0, 2).map(l => `<i style="background:${colorOf(l.id)}"></i>${esc(l.name.split(' · ')[0])} ${money(x.pay[l.id])}`).join(' · ') + (who.length > 2 ? ` · +${who.length - 2} more` : '') : 'Nothing due'}</span><b>${money(x.paid)}</b></div>`; }).join('')}</details>`).join('')}
+    </details>`;
 
-  // controls
+  // chart card: one chart, four views
+  const box = view.querySelector('[data-chart]'), leg = view.querySelector('[data-legend]'), note = view.querySelector('[data-note]'), chips = view.querySelector('[data-chips]');
+  let redraw = () => {};
+  const drawView = () => {
+    view.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.view === chartView)));
+    chips.hidden = chartView !== 'extra'; note.textContent = '';
+    if (chartView === 'balance') {
+      leg.innerHTML = legend([...loans.slice(0, 8).map(l => ({ name: l.name, color: colorOf(l.id) })), ...(st !== 'minimum' ? [{ name: 'Minimums only (total)', dash: true }] : [])]);
+      redraw = stackedBalance(box, r, st === 'minimum' ? null : base, loans, colorOf, { grad });
+      if (st !== 'minimum' && r.done) note.textContent = `Paying only the minimums, you’d still owe ${money(base.rows.find(x => x.m === r.payoffM)?.total ?? base.initTotal)} when this plan finishes${base.done ? `, and wouldn’t be done until ${ymLabel(base.payoffM)}` : ''}.`;
+    } else if (chartView === 'payments') {
+      leg.innerHTML = legend(loans.filter(l => r.rows.some(x => x.pay[l.id])).slice(0, 8).map(l => ({ name: l.name, color: colorOf(l.id) })));
+      redraw = paymentBars(box, r, loans, colorOf, { grad });
+      if (r.rows.length) note.textContent = `Peak month: ${money(Math.max(...r.rows.map(x => x.paid)))}. Tap a bar to see where it goes.`;
+    } else if (chartView === 'interest') {
+      leg.innerHTML = legend([{ name: `${name(st)} (yours)`, color: 'var(--accent)' }, { name: 'Other strategies', color: 'var(--ink-3)' }, ...(st !== 'minimum' ? [{ name: 'Minimums only', dash: true }] : [])]);
+      redraw = raceLines(box, all, st, STRATEGIES);
+    } else {
+      const extra = +plan.extraMonthly || 0, curve = extraCurve(loans, ep, st, { ...opts, max: curveMax, steps: 20 });
+      leg.innerHTML = '';
+      chips.innerHTML = [100, 250, 500, 1000].map(a => { const p = curve.find(c => c.extra === a) || (() => { const x = simulate(loans, { ...ep, extraMonthly: a }, st === 'minimum' ? 'avalanche' : st, opts); return { interest: x.totalInterest, done: x.done, payoffM: x.payoffM, months: x.months }; })();
+        return `<button class="chip-b" type="button" data-setextra="${a}" aria-pressed="${extra === a}"><span>+${money(a)} a month</span><b>saves ${money(curve[0].interest - p.interest)}</b><small>${p.done ? `Debt-free ${ymLabel(p.payoffM)}` : 'Not paid off'}</small></button>`; }).join('');
+      chips.querySelectorAll('[data-setextra]').forEach(b => b.addEventListener('click', () => { const a = +b.dataset.setextra === extra ? 0 : +b.dataset.setextra; setPlan({ extraMonthly: a }, `Extra set to ${money(a)} a month`); }));
+      redraw = extraCurveChart(box, curve, extra, a => setPlan({ extraMonthly: a }, `Extra set to ${money(a)} a month`));
+      note.textContent = 'What finding more each month would do. Extra beyond what’s left after costs comes from savings. Tap the chart to try an amount.';
+    }
+  };
+  view.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => { chartView = b.dataset.view; drawView(); }));
+  drawView();
+
+  // actions
   function setPlan(patch, message, toastMsg = message) { save({ ...data, plan: { ...plan, ...patch } }, message, toastMsg); }
-  view.querySelectorAll('input[name="strategy"]').forEach(i => i.addEventListener('change', () => setPlan({ strategy: i.value }, `Strategy set to ${stratName(i.value)}`)));
-  view.querySelectorAll('[data-use]').forEach(b => b.addEventListener('click', () => { if (b.dataset.use !== st) setPlan({ strategy: b.dataset.use }, `Strategy set to ${stratName(b.dataset.use)}`); }));
-  view.querySelectorAll('[data-mv]').forEach(b => b.addEventListener('click', () => {
-    const ids = [...customIds], i = +b.dataset.mv, j = i + +b.dataset.d; [ids[i], ids[j]] = [ids[j], ids[i]];
-    setPlan({ customOrder: ids }, `Custom order: ${loans.find(l => l.id === ids[0]).name} first`, 'Order updated');
-  }));
-  view.querySelector('[data-autopay]').addEventListener('change', e => setPlan({ autopay: e.target.checked }, `Autopay discount ${e.target.checked ? 'on' : 'off'}`));
-  view.querySelector('[data-refi]').addEventListener('change', e => setPlan({ refi: { ...(plan.refi || { rate: 5.5 }), on: e.target.checked } }, `Refinance what-if ${e.target.checked ? 'on' : 'off'}`));
-  view.querySelector('[data-refi-rate]')?.addEventListener('change', e => { const v = +e.target.value; if (v >= 0 && v <= 30) setPlan({ refi: { ...plan.refi, rate: v } }, `Refinance what-if at ${pct(v)}`); });
-
-  // extra slider: live preview of the summary and balance chart; one save on release
-  const slider = view.querySelector('[data-extra]'), out = view.querySelector('[data-extra-out]'), summary = view.querySelector('[data-summary]');
-  const paint = () => slider.style.setProperty('--p', `${(slider.value / curveMax * 100).toFixed(1)}%`);
-  paint();
-  let t;
-  slider.addEventListener('input', () => {
-    paint(); out.textContent = `+${money(+slider.value)}`;
-    clearTimeout(t); t = setTimeout(() => {
-      const draft = simulate(loans, { ...plan, extraMonthly: +slider.value }, st, opts);
-      summary.innerHTML = summaryHtml(draft);
-      draws[0] = stackedBalance(view.querySelector('[data-balance]'), draft, st === 'minimum' ? null : base, loans, colorOf, { grad });
-    }, 40);
-  });
-  slider.addEventListener('change', () => { if (+slider.value !== extra) setPlan({ extraMonthly: +slider.value }, `Extra set to ${money(+slider.value)} a month`); });
-  view.querySelectorAll('[data-setextra]').forEach(b => b.addEventListener('click', () => {
-    const a = +b.dataset.setextra === extra ? 0 : +b.dataset.setextra;
-    setPlan({ extraMonthly: a }, `Extra set to ${money(a)} a month`);
+  view.querySelector('[data-use-route]')?.addEventListener('click', () => save({ ...data, plan: { ...rec.plan, strategyOverride: null } }, `Using the best route: ${rec.name}, ${money(rec.monthly)}/mo${rec.lumpNow ? `, ${money(rec.lumpNow)} of savings now` : ''}`, `Now on the best route: debt-free ${ymLabel(best.payoffM)}`));
+  view.querySelector('[data-use-best]')?.addEventListener('click', () => save({ ...data, plan: { ...rec.plan, strategyOverride: null } }, `Back to the recommended route: ${rec.name}`, `Back on ${rec.name}`));
+  view.querySelectorAll('[data-use-alt]').forEach(b => b.addEventListener('click', () => {
+    const a = rec.alternatives.find(x => x.id === b.dataset.useAlt);
+    save({ ...data, plan: { ...rec.plan, strategy: a.id, strategyOverride: a.id } }, `Chose ${a.name} instead of ${rec.name}`, `Using ${a.name}`);
   }));
   view.querySelectorAll('[data-move]').forEach(b => b.addEventListener('click', () => {
     const m = moves[+b.dataset.move];
     save({ ...data, plan: applyMove(plan, m.apply, opts) }, `Applied: ${m.title}`, `${m.title} applied`);
   }));
+  view.querySelector('[data-autopay]').addEventListener('change', e => setPlan({ autopay: e.target.checked }, `Autopay discount ${e.target.checked ? 'on' : 'off'}`));
+  view.querySelector('[data-refi]').addEventListener('change', e => setPlan({ refi: { ...(plan.refi || { rate: 5.5 }), on: e.target.checked } }, `Refinance what-if ${e.target.checked ? 'on' : 'off'}`));
+  view.querySelector('[data-refi-rate]')?.addEventListener('change', e => { const v = +e.target.value; if (v >= 0 && v <= 30) setPlan({ refi: { ...plan.refi, rate: v } }, `Refinance what-if at ${pct(v)}`); });
 
-  // scenarios
   view.querySelector('[data-save-scn]').addEventListener('click', () => formSheet({
     title: 'Save this plan', intro: `Debt-free ${r.done ? ymLabel(r.payoffM) : 'not yet'} · ${money(r.totalInterest)} interest`,
     fields: [{ name: 'name', label: 'Name', required: true, maxlength: 60, placeholder: 'Chicago offer, $1,150/wk' }],
@@ -177,5 +170,5 @@ export function renderPlan(view, ctx) {
     save({ ...data, scenarios: data.scenarios.filter(x => x.id !== s.id) }, `Deleted scenario: ${s.name}`, `Deleted “${s.name}”`);
   }));
 
-  return { redraw: () => draws.forEach(d => d?.()) };
+  return { redraw: () => redraw?.() };
 }

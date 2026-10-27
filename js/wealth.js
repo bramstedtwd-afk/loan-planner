@@ -1,6 +1,24 @@
 // Wealth math: net worth, emergency fund, the recommended "best route" for loans, and the next-dollar ranking.
 // Pure functions over { loans, plan, accounts }. These are rule-based comparisons with the reasoning shown, not personal advice.
-import { ymStr, ymLabel, nowYM, simulate, cashFlow, STRATEGIES } from './engine.js';
+import { ym, ymStr, ymLabel, nowYM, simulate, cashFlow, STRATEGIES } from './engine.js';
+
+export const SAVINGS_LUMP = 'Savings above your emergency fund';
+
+// Bank cash above the emergency fund, rounded down to $50 and never more than what's owed. Worked out live from your balances,
+// so once you pay it and update your bank balance it drops to zero by itself.
+export function spareCash(data, start = nowYM()) {
+  const ef = emergencyFund(data.accounts || [], data.plan || {}, start);
+  const owed = (data.loans || []).reduce((s, l) => s + owedOf(l), 0);
+  return ef.surplus >= 100 ? Math.min(Math.floor(ef.surplus / 50) * 50, Math.floor(owed)) : 0;
+}
+
+// The plan as the simulator should see it: with "use spare cash" on, today's spare cash goes in this month as a one-time payment.
+export function effectivePlan(data, start = nowYM()) {
+  const plan = data.plan || {};
+  if (!plan.useSpareCash) return plan;
+  const amt = spareCash(data, start);
+  return amt ? { ...plan, lumps: [...(plan.lumps || []), { month: ymStr(start), label: SAVINGS_LUMP, amount: amt }] } : plan;
+}
 
 export const ACCOUNT_KINDS = {
   bank: { label: 'Bank cash', short: 'Cash' },
@@ -41,23 +59,19 @@ const firstPayoff = (res, loans) => {
 export function recommendRoute(data, { start = nowYM() } = {}) {
   const loans = data.loans || [], plan = data.plan || {}, accounts = data.accounts || [];
   const ef = emergencyFund(accounts, plan, start);
-  const owed = loans.reduce((s, l) => s + owedOf(l), 0);
-  const lumpNow = ef.surplus >= 100 ? Math.min(Math.floor(ef.surplus / 50) * 50, Math.floor(owed)) : 0;
-  const base = {
-    ...plan, share: 100, extraMonthly: 0,
-    lumps: [...(plan.lumps || []), ...(lumpNow ? [{ month: ymStr(start), label: 'Savings above your emergency fund', amount: lumpNow }] : [])],
-  };
+  const lumpNow = spareCash(data, start);
+  const base = { ...plan, share: 100, extraMonthly: 0, useSpareCash: true };
   const ids = ['avalanche', 'private', 'snowball', ...((plan.customOrder || []).length ? ['custom'] : []), 'minimum'];
-  const results = Object.fromEntries(ids.map(id => [id, simulate(loans, { ...base, strategy: id }, id, { start })]));
+  const results = Object.fromEntries(ids.map(id => [id, simulate(loans, effectivePlan({ ...data, plan: { ...base, strategy: id } }, start), id, { start })]));
   const ranked = ids.filter(id => id !== 'minimum' && results[id].done)
     .sort((a, b) => (results[a].totalInterest - results[b].totalInterest > 1 ? 1 : results[b].totalInterest - results[a].totalInterest > 1 ? -1 : 0)
       || TIE_PREFERENCE.indexOf(a) - TIE_PREFERENCE.indexOf(b));
   const best = ranked[0] || 'avalanche', r = results[best];
   const cf = cashFlow(plan, start);
   const monthly = Math.max(0, cf.income - cf.costs);
-  const current = simulate(loans, plan, STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche', { start });
+  const current = simulate(loans, effectivePlan(data, start), STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche', { start });
   const currentNow = current.rows[0]?.paid || 0;
-  const relyOnSavings = currentNow > Math.max(monthly, current.rows[0]?.minsDue || 0) + lumpsIn(plan, start) + 1;
+  const relyOnSavings = currentNow > Math.max(monthly, current.rows[0]?.minsDue || 0) + lumpsIn(effectivePlan(data, start), start) + 1;
 
   // where the money goes first: the loan getting the most this month beyond its minimum
   const row = r.rows[0];

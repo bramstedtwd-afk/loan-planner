@@ -7,17 +7,18 @@ test('each of the four tabs resolves to itself', () => {
 });
 
 test('older links redirect to their new homes', () => {
-  eq(resolveRoute('#money').key, 'wealth'); eq(resolveRoute('#money').redirected, true);
+  eq(resolveRoute('#money').key, 'cashflow'); eq(resolveRoute('#money').redirected, true);
   eq(resolveRoute('#history').key, 'activity');
 });
 
-test('Activity belongs to the Loans tab; Settings to no tab', () => {
+test('sub-views belong to their tab; Settings to no tab', () => {
   eq(resolveRoute('#activity').tab, 'loans');
+  eq(resolveRoute('#accounts').tab, 'wealth'); eq(resolveRoute('#cashflow').tab, 'wealth');
   eq(resolveRoute('#settings').tab, null);
 });
 
 test('empty or unknown links open Today', () => {
   eq(resolveRoute('').key, 'today'); eq(resolveRoute('#').key, 'today');
   eq(resolveRoute('#nope').key, 'today'); eq(resolveRoute(undefined).key, 'today');
-  eq(Object.keys(ROUTES).length, 6);
+  eq(Object.keys(ROUTES).length, 8);
 });

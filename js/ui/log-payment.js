@@ -9,6 +9,7 @@ export function openLogPayment({ data, planned = {}, onSave }) {
   if (!open.length) return;
   const sorted = [...open].sort((a, b) => (planned[b.id] || 0) - (planned[a.id] || 0) || +b.rate - +a.rate);
   const first = sorted[0];
+  const banks = (data.accounts || []).filter(a => a.kind === 'bank');
   openSheet(`
     <form class="form" data-form novalidate>
       <h2>Log a payment</h2>
@@ -19,6 +20,7 @@ export function openLogPayment({ data, planned = {}, onSave }) {
         <label class="field"><span>Date paid</span><input name="date" type="date" required value="${todayISO()}"></label>
       </div>
       <label class="field"><span>Note <em>optional</em></span><input name="note" type="text" maxlength="120" placeholder="Autopay, extra principal…"></label>
+      ${banks.length ? `<label class="field"><span>Paid from <em>lowers that balance too</em></span><select name="from"><option value="">Don’t change any balance</option>${banks.map((a, i) => `<option value="${esc(a.id)}" ${banks.length === 1 && i === 0 ? 'selected' : ''}>${esc(a.name)} · ${money(+a.balance || 0)}</option>`).join('')}</select></label>` : ''}
       <p class="split" data-split aria-live="polite"></p>
       <p class="err" data-err hidden></p>
       <div class="sheet-actions"><button class="btn soft" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Log payment</button></div>
@@ -46,6 +48,13 @@ export function openLogPayment({ data, planned = {}, onSave }) {
         next.loans = next.loans.map(x => x.id === l.id ? s.loan : x);
         next.payments.push({ id: `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, loanId: l.id, loanName: l.name, date: f.date.value,
           amount: s.applied, interest: s.interest, principal: s.principal, note: f.note.value.trim(), createdAt: new Date().toISOString() });
+        // Paying from a bank account lowers it too, so spare cash and net worth stay accurate.
+        const from = f.from?.value;
+        if (from) next.accounts = next.accounts.map(a => {
+          if (a.id !== from) return a;
+          const balance = Math.round(((+a.balance || 0) - s.applied) * 100) / 100, date = f.date.value;
+          return { ...a, balance, updatedAt: date, history: [...(a.history || []).filter(h => h.date !== date), { date, balance }].sort((x, y) => x.date.localeCompare(y.date)) };
+        });
         close();
         onSave(next, `Logged ${money(s.applied, true)} payment to ${l.name}`, `${money(s.applied, true)} logged · ${money(s.interest, true)} interest, ${money(s.principal, true)} principal`);
       });

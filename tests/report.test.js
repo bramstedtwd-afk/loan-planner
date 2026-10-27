@@ -1,6 +1,6 @@
 // Monthly check-in tests. Made-up data only.
 import { test, eq, ok } from './harness.js';
-import { monthlyCheckin } from '../js/report.js';
+import { monthlyCheckin, reminders } from '../js/report.js';
 import { defaultPlan } from '../js/engine.js';
 
 const NOW = new Date('2026-11-01T14:00:00Z');
@@ -45,6 +45,15 @@ test('a month with nothing logged gets a reminder once there is history', () => 
   const prev = monthlyCheckin(d, [], { now: new Date('2026-10-01T14:00:00Z') }).snapshot;
   const c = monthlyCheckin(d, [prev], { now: NOW });
   ok(/No payments were logged in October 2026/.test(c.body));
+});
+
+test('reminders have stable keys that match the report text', () => {
+  const r = reminders(data(), { now: NOW });
+  const keys = r.map(x => x.key);
+  ok(keys.includes('repay-f') && keys.includes('variable-p') && keys.includes('stale'), keys.join(','));
+  const body = monthlyCheckin(data(), [], { now: NOW }).body;
+  for (const x of r) ok(body.includes(x.text), `report includes ${x.key}`);
+  eq(reminders(data(), { now: NOW, hasHistory: false }).some(x => x.key === 'no-log'), false);
 });
 
 test('no loans still produces a report', () => {

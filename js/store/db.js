@@ -39,7 +39,7 @@ export const DB_VERSION = MIGRATIONS.length;
 export const MIGRATIONS_FOR_TESTS = MIGRATIONS;
 
 // Plan fields kept as JSON in `settings`; list fields live in their own tables.
-const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder', 'emergencyMonths', 'assumedReturn', 'employerMatch', 'strategyOverride'];
+const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder', 'emergencyMonths', 'assumedReturn', 'employerMatch', 'strategyOverride', 'dismissed', 'useSpareCash'];
 
 const rowsOf = (db, sql, params) => {
   const st = db.prepare(sql); if (params) st.bind(params);

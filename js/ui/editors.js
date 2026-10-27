@@ -1,7 +1,8 @@
 // Add/edit sheets for income, monthly costs and one-time payments. Shared by the Wealth screen and the + quick actions.
 import { ym, ymStr, ymLabel, toMonthly } from '../engine.js';
-import { money } from '../format.js';
+import { money, todayISO } from '../format.js';
 import { formSheet } from './form-sheet.js';
+import { ACCOUNT_KINDS } from '../wealth.js';
 
 export const INC_KINDS = { part: 'Part-time', intern: 'Internship', full: 'Full-time', other: 'Other' };
 
@@ -88,5 +89,65 @@ export function makeEditors({ data, save, start }) {
     });
   };
 
-  return { editIncome, editCost, editLump, INC_PRESETS, COST_PRESETS };
+  // accounts: every balance change also records a dated history entry
+  const accounts = data.accounts || [];
+  const withHistory = (a, balance, date) => ({ ...a, balance, updatedAt: date, history: [...(a.history || []).filter(h => h.date !== date), { date, balance }].sort((x, y) => x.date.localeCompare(y.date)) });
+  const setAccounts = (list, message, toastMsg) => save({ ...data, accounts: list }, message, toastMsg);
+
+  const editAccount = (i, kind = 'bank') => {
+    const isNew = i == null, a = isNew ? { kind, name: '', institution: '', balance: '', rate: '', minPayment: '' } : accounts[i];
+    formSheet({
+      title: isNew ? `Add ${ACCOUNT_KINDS[a.kind]?.label.toLowerCase() || 'an account'}` : `Edit ${a.name}`,
+      fields: [
+        { name: 'name', label: 'Name', value: a.name, required: true, maxlength: 50, placeholder: a.kind === 'debt' ? 'Credit card' : a.kind === 'brokerage' ? 'Robinhood' : a.kind === 'retirement' ? 'Roth IRA' : 'Checking' },
+        { name: 'kind', label: 'Type', type: 'select', value: a.kind, options: Object.entries(ACCOUNT_KINDS).map(([k, v]) => [k, v.label]), half: true },
+        { name: 'institution', label: 'Bank or company', value: a.institution, maxlength: 50, half: true },
+        { name: 'balance', label: a.kind === 'debt' ? 'Amount owed' : 'Balance', type: 'number', value: a.balance, prefix: '$', min: 0, step: 0.01, required: true, half: true },
+        { name: 'rate', label: 'Interest rate', hint: 'debts', type: 'number', value: a.rate || '', suffix: '%', min: 0, max: 60, step: 0.01, half: true },
+        { name: 'minPayment', label: 'Monthly minimum', hint: 'debts', type: 'number', value: a.minPayment || '', prefix: '$', min: 0, step: 0.01, half: true },
+        { name: 'notes', label: 'Notes', value: a.notes, maxlength: 120, half: true },
+      ],
+      submitLabel: isNew ? 'Add account' : 'Save',
+      onSubmit: v => {
+        const today = todayISO();
+        let acct = { ...a, name: v.name, kind: v.kind, institution: v.institution, rate: +v.rate || 0, minPayment: +v.minPayment || 0, notes: v.notes, source: a.source || 'manual' };
+        if (isNew) { acct.id = `a${Date.now().toString(36)}`; acct.order = Math.max(0, ...accounts.map(x => x.order ?? 0)) + 1; }
+        acct = (isNew || +v.balance !== +a.balance) ? withHistory(acct, +v.balance, today) : { ...acct, balance: +v.balance };
+        const list = isNew ? [...accounts, acct] : accounts.map((x, k) => k === i ? acct : x);
+        setAccounts(list, isNew ? `Added account ${acct.name}: ${money(acct.balance, true)}` : `Updated account ${acct.name}`, isNew ? `${acct.name} added` : `${acct.name} saved`);
+      },
+      onDelete: isNew ? null : () => setAccounts(accounts.filter((_, k) => k !== i), `Removed account ${a.name}`, `${a.name} removed`),
+    });
+  };
+
+  const updateBalance = i => {
+    const a = accounts[i];
+    formSheet({
+      title: `Update ${a.name}`,
+      intro: `Last updated ${a.updatedAt || 'never'} at ${money(+a.balance || 0, true)}.`,
+      fields: [
+        { name: 'balance', label: a.kind === 'debt' ? 'Amount owed today' : 'Balance today', type: 'number', value: a.balance, prefix: '$', min: 0, step: 0.01, required: true, half: true },
+        { name: 'date', label: 'As of', type: 'date', value: todayISO(), required: true, half: true },
+      ],
+      footer: '<p class="split" data-delta></p>',
+      onInput: (v, sheet) => { const d = (+v.balance || 0) - (+a.balance || 0); sheet.querySelector('[data-delta]').innerHTML = Math.abs(d) >= 0.01 ? `<b>${d > 0 ? '+' : '−'}${money(Math.abs(d), true)}</b> since last update` : ''; },
+      submitLabel: 'Update',
+      onSubmit: v => {
+        const acct = withHistory(a, +v.balance, v.date);
+        setAccounts(accounts.map((x, k) => k === i ? acct : x), `Balance ${a.name}: ${money(+v.balance, true)} (${v.date})`, `${a.name} updated`);
+      },
+    });
+  };
+
+  const pickAccountToUpdate = () => {
+    if (!accounts.length) return editAccount(null, 'bank');
+    formSheet({
+      title: 'Update a balance',
+      fields: [{ name: 'acct', label: 'Account', type: 'select', value: '0', options: accounts.map((a, k) => [String(k), `${a.name} · ${money(+a.balance || 0)}`]) }],
+      submitLabel: 'Next',
+      onSubmit: v => { setTimeout(() => updateBalance(+v.acct), 200); },
+    });
+  };
+
+  return { editIncome, editCost, editLump, editAccount, updateBalance, pickAccountToUpdate, INC_PRESETS, COST_PRESETS };
 }

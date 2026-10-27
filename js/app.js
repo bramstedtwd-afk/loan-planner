@@ -11,11 +11,13 @@ import { renderHistory } from './screens/history.js';
 import { renderPlan } from './screens/plan.js';
 import { renderMoney } from './screens/money.js';
 import { renderLoans } from './screens/loans.js';
+import { renderWealth } from './screens/wealth.js';
 import { openLogPayment } from './ui/log-payment.js';
 import { openQuickActions } from './ui/quick-actions.js';
 import { makeEditors } from './ui/editors.js';
 import { header } from './ui/layout.js';
 import { resolveRoute } from './routes.js';
+import { effectivePlan } from './wealth.js';
 
 const SQL_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/';
 const CONFIG_KEY = 'loanPayoff.github.v1', DB_KEY = 'loanPayoff.db.v1';
@@ -68,9 +70,10 @@ function save(next, message, toastMsg = message) {
 function compute() {
   const { loans, plan } = state.data;
   const st = STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
+  const ep = effectivePlan(state.data, start); // includes spare cash when the plan uses it
   return {
-    results: { [st]: simulate(loans, { ...plan, strategy: st }, st, { start }), minimum: simulate(loans, plan, 'minimum', { start }) },
-    moves: interestMoves(loans, plan, st, { start }),
+    results: { [st]: simulate(loans, { ...ep, strategy: st }, st, { start }), minimum: simulate(loans, ep, 'minimum', { start }) },
+    moves: interestMoves(loans, ep, st, { start }),
     strategyName: STRATEGIES.find(s => s.id === st).name, strategy: st,
   };
 }
@@ -142,8 +145,9 @@ const SCREENS = {
   today: { render: v => {
     if (!state.data.loans.length) return emptyState(v, 'Today');
     const c = compute();
+    if (state.config.token && checkins.status === 'idle') loadCheckins();
     return renderToday(v, {
-      data: state.data, start, colorOf, ...c, syncLabel: syncInfo()[0],
+      data: state.data, start, colorOf, ...c, save, hasHistory: (checkins.snapshots || []).length > 0,
       onApplyMove: m => save({ ...state.data, plan: applyMove(state.data.plan, m.apply, { start }) }, `Applied: ${m.title}`, `${m.title} applied`),
       onLogPayment: logPayment,
     });
@@ -161,8 +165,10 @@ const SCREENS = {
     onExportJson: () => download(`planner-${todayISO()}.json`, JSON.stringify({ app: 'loan-payoff', exportedAt: new Date().toISOString(), ...state.data }, null, 2), 'application/json'),
   }) },
   plan: { render: v => state.data.loans.length ? renderPlan(v, { data: state.data, start, colorOf, save }) : emptyState(v, 'Plan') },
-  wealth: { render: v => renderMoney(v, { data: state.data, start, save }) },
-  loans: { render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save }); } },
+  wealth: { render: v => renderWealth(v, { data: state.data, start, save }, 'wealth') },
+  accounts: { render: v => renderWealth(v, { data: state.data, start, save }, 'accounts') },
+  cashflow: { render: v => renderMoney(v, { data: state.data, start, save }) },
+  loans: { render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save, onLogPayment: logPayment }); } },
 };
 
 function emptyState(v, title) {
@@ -194,6 +200,7 @@ document.querySelector('[data-quick]').addEventListener('click', () => {
   const ed = makeEditors({ data: state.data, save, start });
   openQuickActions({
     log: state.data.loans.length ? logPayment : null,
+    balance: () => ed.pickAccountToUpdate(),
     income: () => ed.editIncome(null), cost: () => ed.editCost(null), lump: () => ed.editLump(null),
   });
 });

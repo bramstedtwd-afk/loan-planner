@@ -3,7 +3,8 @@ import { openSheet } from './sheet.js';
 
 const ACTIONS = [
   { key: 'log', icon: 'i-send', title: 'Log a payment', sub: 'Record what you sent a servicer' },
-  { key: 'income', icon: 'i-money', title: 'Add income', sub: 'A job, internship or side gig' },
+  { key: 'balance', icon: 'i-money', title: 'Update a balance', sub: 'Bank, investing, retirement or a debt' },
+  { key: 'income', icon: 'i-plan', title: 'Add income', sub: 'A job, internship or side gig' },
   { key: 'cost', icon: 'i-loans', title: 'Add monthly costs', sub: 'Rent, food, phone and the rest' },
   { key: 'lump', icon: 'i-spark', title: 'Add a one-time payment', sub: 'Tax refund, bonus or gift toward loans' },
 ];

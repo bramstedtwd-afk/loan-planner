@@ -1,13 +1,41 @@
 // Loans: every loan with its balance, rate, minimum and payoff month; tap one to edit; add new ones; set graduation.
-import { ym, ymStr, ymLabel, isFed, KINDS, dailyInterest } from '../engine.js';
+import { ym, ymStr, ymLabel, isFed, KINDS, dailyInterest, cashFlow } from '../engine.js';
 import { money, esc, pct, todayISO } from '../format.js';
 import { formSheet } from '../ui/form-sheet.js';
 import { header, subnav } from '../ui/layout.js';
 
 const owedOf = l => (+l.balance || 0) + (+l.unpaid || 0);
 
+// What to send each servicer this month, and why the extra goes where it does.
+const WHY = { avalanche: 'Highest rate, so extra goes here first', snowball: 'Smallest balance, so extra goes here first', private: 'Private loan, cleared before federal', custom: 'First in your custom order' };
+function thisMonthCard(data, r, start, colorOf) {
+  const row = r?.rows[0];
+  if (!row) return '';
+  const plan = data.plan, st = r.strategy, cf = cashFlow(plan, start), extra = +plan.extraMonthly || 0;
+  const minOf = id => r.loans.find(l => l.id === id)?.min || 0;
+  const paying = data.loans.filter(l => row.pay[l.id] > 0.005);
+  const idle = data.loans.filter(l => (row.bal[l.id] ?? 0) > 0.005 && !(row.pay[l.id] > 0.005));
+  const idleRepay = idle.map(l => ym(l.repayStart)).filter(m => m != null && m > start);
+  const how = cf.inc.length ? `${money(cf.income)} in − ${money(cf.costs)} costs${cf.share < 100 ? ` × ${cf.share}%` : ''}${extra ? `, plus ${money(extra)} extra` : ''}${row.lump ? `, plus ${money(row.lump)} one-time` : ''}` : extra ? `Your ${money(extra)} monthly extra` : 'Only the minimums are due';
+  const monthName = new Date(Math.floor(start / 12), start % 12, 1).toLocaleDateString('en-US', { month: 'long' });
+  const logged = (data.payments || []).filter(p => String(p.date).startsWith(ymStr(start))).reduce((s, p) => s + (+p.amount || 0), 0);
+  const left = Math.max(0, row.paid - logged);
+  return `<section class="card glass rise" aria-label="This month">
+    <div class="card-h"><h2>${monthName} payment</h2><span class="badge">${logged ? `${money(logged)} logged` : `${paying.length} loan${paying.length === 1 ? '' : 's'}`}</span></div>
+    <div class="big num">${logged && left < 0.5 ? '✓ Sent' : money(logged ? left : row.paid)}</div>
+    ${logged ? `<p class="small" style="margin:6px 0 0;color:var(--good);font-weight:600">${left < 0.5 ? `You’ve logged ${money(logged)} this month, which covers the plan.` : `${money(logged)} logged so far; ${money(left)} still to send.`}</p>` : ''}
+    <p class="muted small" style="margin:6px 0 6px">${how}</p>
+    <div class="rows">
+      ${paying.map(l => { const p = row.pay[l.id], gotExtra = p > Math.min(minOf(l.id), p) + 0.005 && st !== 'minimum';
+        return `<div class="row"><span class="dotc" style="background:${colorOf(l.id)}"></span><div class="name"><b>${esc(l.name)}</b><small>${gotExtra ? WHY[st] : 'Minimum payment'}</small></div><span class="amt num">${money(p, p % 1 > 0.004)}</span></div>`; }).join('')}
+      ${idle.length ? `<div class="row"><span class="dotc" style="background:var(--s-other)"></span><div class="name"><b>${idle.length} other loan${idle.length === 1 ? '' : 's'}</b><small>${idleRepay.length === idle.length ? `In school or grace until ${ymLabel(Math.min(...idleRepay))}, nothing due` : 'Nothing due this month'}</small></div><span class="amt num muted">$0</span></div>` : ''}
+    </div>
+    <button class="btn primary block" type="button" data-log style="margin-top:12px"><svg class="i"><use href="#i-send"/></svg>Log a payment</button>
+  </section>`;
+}
+
 export function renderLoans(view, ctx) {
-  const { data, result: r, start, colorOf, save } = ctx;
+  const { data, result: r, start, colorOf, save, onLogPayment } = ctx;
   const loans = data.loans;
   const total = loans.reduce((s, l) => s + owedOf(l), 0);
   const orig = loans.reduce((s, l) => s + (+l.origBalance || owedOf(l)), 0);
@@ -32,6 +60,7 @@ export function renderLoans(view, ctx) {
   view.innerHTML = `
     ${header({ title: 'Loans' })}
     ${subnav([['loans', 'Loans'], ['activity', 'Activity']], 'loans', 'Loans views')}
+    ${thisMonthCard(data, r, start, colorOf)}
     <section class="card glass rise">
       <div class="tiles">
         <div class="tile"><span>Total owed</span><b class="num">${money(total)}</b></div>
@@ -52,6 +81,7 @@ export function renderLoans(view, ctx) {
     </section>`;
 
   view.querySelector('[data-add]').addEventListener('click', () => editLoan(null));
+  view.querySelector('[data-log]')?.addEventListener('click', onLogPayment);
   view.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => editLoan(loans.find(l => l.id === b.dataset.edit))));
   view.querySelector('[data-grad]').addEventListener('click', () => {
     formSheet({

@@ -5,12 +5,14 @@ export const ROUTES = {
   today: { tab: 'today', title: 'Today' },
   plan: { tab: 'plan', title: 'Plan' },
   wealth: { tab: 'wealth', title: 'Wealth' },
+  accounts: { tab: 'wealth', title: 'Accounts' },
+  cashflow: { tab: 'wealth', title: 'Cash flow' },
   loans: { tab: 'loans', title: 'Loans' },
   activity: { tab: 'loans', title: 'Activity' },
   settings: { tab: null, title: 'Settings' },
 };
 
-const ALIASES = { '': 'today', money: 'wealth', history: 'activity' };
+const ALIASES = { '': 'today', money: 'cashflow', history: 'activity' };
 
 export function resolveRoute(hash) {
   const asked = String(hash || '').replace(/^#/, '');

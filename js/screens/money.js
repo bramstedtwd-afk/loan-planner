@@ -3,7 +3,9 @@ import { ym, ymStr, ymLabel, cashFlow, toMonthly, activeIn, simulate } from '../
 import { money, esc } from '../format.js';
 import { cashflowBars, legend } from '../charts.js';
 import { makeEditors, INC_KINDS } from '../ui/editors.js';
-import { header } from '../ui/layout.js';
+import { header, subnav } from '../ui/layout.js';
+import { WEALTH_TABS } from './wealth.js';
+import { effectivePlan } from '../wealth.js';
 const range = s => `${s.start ? ymLabel(ym(s.start)) : '—'} – ${s.end ? ymLabel(ym(s.end)) : 'ongoing'}`;
 
 export function renderMoney(view, ctx) {
@@ -12,7 +14,7 @@ export function renderMoney(view, ctx) {
   const g = ym(plan.gradMonth) ?? start + 12;
 
   const flowData = (p) => {
-    const r = simulate(data.loans, p, st, { start });
+    const r = simulate(data.loans, effectivePlan({ ...data, plan: p }, start), st, { start });
     const end = Math.min(start + 72, Math.max(start + 36, g + 24, r.done ? r.payoffM + 3 : 0));
     const out = [];
     for (let m = start; m <= end; m++) {
@@ -32,6 +34,7 @@ export function renderMoney(view, ctx) {
 
   view.innerHTML = `
     ${header({ title: 'Wealth' })}
+    ${subnav(WEALTH_TABS, 'cashflow', 'Wealth views')}
     <section class="card glass rise">
       <div class="card-h"><h2>${new Date(Math.floor(start / 12), start % 12, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h2><span class="muted small">This month</span></div>
       <div class="tiles">
