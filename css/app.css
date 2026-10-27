@@ -317,6 +317,14 @@ button.row:hover .name b { color: var(--accent); }
 .row .chev { color: var(--ink-3); flex: none; }
 .add-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .add-row .btn { height: 38px; font-size: 13.5px; padding: 0 14px; }
+/* Robinhood sync line */
+.rh-strip { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 4px; border-radius: 14px; background: var(--hairline); }
+.rh-strip .name { flex: 1; min-width: 0; }
+.rh-strip .name b { display: block; font-weight: 600; font-size: 14px; }
+.rh-strip .name small { color: var(--ink-3); font-size: 12.5px; }
+.rh-strip .btn { height: 34px; font-size: 13px; padding: 0 14px; flex: none; }
+.spin { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -1px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .tag { display: inline-block; font-size: 11px; font-weight: 650; padding: 2px 7px; border-radius: 999px; background: var(--hairline); color: var(--ink-2); vertical-align: 1px; margin-left: 6px; }
 .tag.fed { background: var(--accent-soft); color: var(--accent); }
 .tag.now { background: rgb(42 120 214 / 0.14); color: var(--s1); }

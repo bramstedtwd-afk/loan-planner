@@ -10,8 +10,18 @@ export const WEALTH_TABS = [['wealth', 'Overview'], ['accounts', 'Accounts'], ['
 const GROUP_ORDER = ['bank', 'brokerage', 'retirement', 'debt'];
 const daysOld = d => d ? Math.floor((Date.now() - new Date(d + 'T12:00')) / 864e5) : null;
 
+// The Robinhood line: when the routine last read your balances, and a button to ask for fresh numbers.
+function rhStrip(rh) {
+  if (!rh) return '';
+  const busy = rh.status === 'refreshing';
+  const when = rh.fetchedAt ? `Synced ${ago(rh.fetchedAt)}` : rh.status === 'loading' ? 'Checking…' : rh.status === 'error' ? 'Couldn’t check for new numbers' : 'Not synced yet';
+  return `<div class="rh-strip"><div class="name"><b>Robinhood</b><small>${busy ? 'Claude is reading your balances (read-only)…' : esc(rh.error || when)}</small></div>
+    <button class="btn soft" type="button" data-rh-refresh ${busy ? 'disabled' : ''}>${busy ? '<span class="spin" aria-hidden="true"></span>Refreshing' : 'Refresh'}</button></div>`;
+}
+
 export function renderWealth(view, ctx, sub) {
-  const { data, start, save } = ctx;
+  const { data, start, save, robinhood: rh } = ctx;
+  const wireRh = () => view.querySelector('[data-rh-refresh]')?.addEventListener('click', () => rh.onRefresh());
   const accounts = data.accounts || [];
   const ed = makeEditors({ data, save, start });
   const nw = netWorth(accounts, data.loans);
@@ -24,6 +34,7 @@ export function renderWealth(view, ctx, sub) {
         const total = list.reduce((s, x) => s + (+x.a.balance || 0), 0);
         return `<section class="card glass rise">
           <div class="card-h"><h2>${ACCOUNT_KINDS[kind].label}</h2>${list.length ? `<span class="muted small num">${kind === 'debt' ? '−' : ''}${money(total)}</span>` : ''}</div>
+          ${kind === 'brokerage' ? rhStrip(rh) : ''}
           <div class="rows">${list.map(({ a, i }) => {
             const old = daysOld(a.updatedAt), stale = old != null && old > 30;
             const prev = (a.history || []).slice(-2, -1)[0], d = prev ? (+a.balance || 0) - prev.balance : 0;
@@ -31,7 +42,7 @@ export function renderWealth(view, ctx, sub) {
                 <small>${esc(a.institution || ACCOUNT_KINDS[a.kind].label)} · <span style="${stale ? 'color:var(--warn)' : ''}">${a.updatedAt ? `updated ${ago(a.updatedAt + 'T12:00')}` : 'not updated yet'}</span>${a.kind === 'debt' && +a.rate ? ` · ${pct(a.rate)}` : ''}</small></button>
               <div class="right"><span class="amt num">${a.kind === 'debt' ? '−' : ''}${money(+a.balance || 0)}</span>${Math.abs(d) >= 1 ? `<small class="num" style="color:${(d > 0) !== (a.kind === 'debt') ? 'var(--good)' : 'var(--crit)'}">${d > 0 ? '↑' : '↓'} ${money(Math.abs(d))}</small>` : ''}</div>
               <button class="btn soft edit" type="button" data-edit-acct="${i}">Edit</button></div>`;
-          }).join('') || `<p class="muted small" style="margin:0">${{ bank: 'Checking and savings. This is the cash your emergency fund and lump sums come from.', brokerage: 'Robinhood or any brokerage. Refreshing from Robinhood comes in a later step; for now, enter it here.', retirement: 'Roth IRA, 401(k) and similar. Counted in net worth, never used for loans.', debt: 'Credit cards, car loans, anything besides student loans.' }[kind]}</p>`}</div>
+          }).join('') || `<p class="muted small" style="margin:0">${{ bank: 'Checking and savings. This is the cash your emergency fund and lump sums come from.', brokerage: rh ? 'Tap Refresh to pull your Robinhood accounts in, or add another brokerage by hand.' : 'Robinhood or any brokerage. Connect GitHub in Settings to sync Robinhood.', retirement: 'Roth IRA, 401(k) and similar. Counted in net worth, never used for loans.', debt: 'Credit cards, car loans, anything besides student loans.' }[kind]}</p>`}</div>
           <div class="add-row"><button class="btn soft" type="button" data-add="${kind}">+ Add ${ACCOUNT_KINDS[kind].label.toLowerCase()}</button></div>
         </section>`;
       }).join('')}
@@ -39,6 +50,7 @@ export function renderWealth(view, ctx, sub) {
     view.querySelectorAll('[data-update]').forEach(b => b.addEventListener('click', () => ed.updateBalance(+b.dataset.update)));
     view.querySelectorAll('[data-edit-acct]').forEach(b => b.addEventListener('click', () => ed.editAccount(+b.dataset.editAcct)));
     view.querySelectorAll('[data-add]').forEach(b => b.addEventListener('click', () => ed.editAccount(null, b.dataset.add)));
+    wireRh();
     return {};
   }
 
@@ -61,6 +73,7 @@ export function renderWealth(view, ctx, sub) {
       <div class="nw">${barRow('Have', assetsParts, nw.assets)}${barRow('Owe', debtParts, nw.debts)}</div>
       <div class="nw-key">${[...assetsParts, ...debtParts].map(([n, v, c]) => `<span><i style="background:${c}"></i>${n} ${money(v)}</span>`).join('')}</div>
     </section>
+    ${rh ? `<section class="card glass rise">${rhStrip(rh)}</section>` : ''}
     ${accounts.length ? '' : `<section class="card glass rise"><div class="card-h"><h2>Start with your bank balance</h2></div><p class="muted small" style="margin:0 0 12px">Your checking and savings decide your emergency fund and how much cash the Plan can put toward loans. Investing and retirement accounts count toward net worth.</p><div class="add-row"><button class="btn primary" type="button" data-add="bank">Add bank account</button><button class="btn soft" type="button" data-add="brokerage">Add investing</button><button class="btn soft" type="button" data-add="retirement">Add retirement</button></div></section>`}
     <div class="board">
       <div class="col">
@@ -87,6 +100,7 @@ export function renderWealth(view, ctx, sub) {
     </div>`;
 
   view.querySelectorAll('[data-add]').forEach(b => b.addEventListener('click', () => ed.editAccount(null, b.dataset.add)));
+  wireRh();
   view.querySelector('[data-assume]').addEventListener('click', () => formSheet({
     title: 'Assumptions',
     intro: 'These shape the emergency-fund goal and the next-dollar order.',

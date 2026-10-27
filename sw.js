@@ -1,6 +1,6 @@
 // Lets the app open without a connection. App files: network first (so updates show up right away), saved copy when offline.
 // Pinned CDN files (sql.js, fonts) never change, so they come from the saved copy first. GitHub API calls are never stored here.
-const CACHE = 'loan-payoff-v5';
+const CACHE = 'loan-payoff-v6';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'css/app.css', 'icons/icon-192.png',
   'js/app.js', 'js/routes.js', 'js/engine.js', 'js/format.js', 'js/charts.js', 'js/report.js', 'js/wealth.js',
   'js/store/db.js', 'js/store/github.js', 'js/store/sync.js', 'js/store/local.js',

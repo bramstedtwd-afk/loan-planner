@@ -17,7 +17,7 @@ import { openQuickActions } from './ui/quick-actions.js';
 import { makeEditors } from './ui/editors.js';
 import { header } from './ui/layout.js';
 import { resolveRoute } from './routes.js';
-import { effectivePlan } from './wealth.js';
+import { effectivePlan, mergeRobinhood } from './wealth.js';
 
 const SQL_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/';
 const CONFIG_KEY = 'loanPayoff.github.v1', DB_KEY = 'loanPayoff.db.v1';
@@ -41,6 +41,49 @@ async function loadCheckins() {
     checkins.status = 'ready';
   } catch { checkins.status = 'error'; }
   if (resolveRoute(location.hash).key === 'activity') render();
+}
+
+// Robinhood balances arrive in wealth/robinhood.json, written by a read-only Claude routine (daily, and on request).
+// Refresh commits wealth/refresh-request.json, which starts the routine; we then watch for a newer snapshot.
+const RH_FILE = 'wealth/robinhood.json', RH_REQUEST = 'wealth/refresh-request.json';
+const robinhood = { status: 'idle', fetchedAt: '', error: '' };
+const readJson = async path => { const f = await new GitHubFile({ ...state.config, path }).load(); return f ? JSON.parse(new TextDecoder().decode(f.bytes)) : null; };
+async function loadRobinhood() {
+  if (!state.config.token || robinhood.status === 'loading') return null;
+  const wasRefreshing = robinhood.status === 'refreshing';
+  if (!wasRefreshing) robinhood.status = 'loading';
+  let snap = null;
+  try { snap = await readJson(RH_FILE); } catch {
+    if (!wasRefreshing) { robinhood.status = 'error'; if (['wealth', 'accounts'].includes(resolveRoute(location.hash).key)) render(); }
+    return null;
+  }
+  robinhood.fetchedAt = snap?.fetchedAt || '';
+  if (!wasRefreshing) robinhood.status = snap ? 'ready' : 'none';
+  const m = mergeRobinhood(state.data.accounts, snap);
+  if (m.changed) {
+    state.data = normalize({ ...state.data, accounts: m.accounts });
+    state.sync.commit(state.data, `Robinhood sync: ${money(+snap.totalValue || 0)}`);
+  }
+  if (m.changed || ['wealth', 'accounts', 'today'].includes(resolveRoute(location.hash).key)) render();
+  return snap;
+}
+async function refreshRobinhood() {
+  if (!state.config.token) { toast('Connect GitHub in Settings first.'); return; }
+  if (robinhood.status === 'refreshing') return;
+  const requestedAt = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+  robinhood.status = 'refreshing'; robinhood.error = ''; render();
+  try {
+    const f = new GitHubFile({ ...state.config, path: RH_REQUEST });
+    const cur = await f.load();
+    await f.save(new TextEncoder().encode(JSON.stringify({ requestedAt }, null, 2) + '\n'), cur?.sha || null, 'Robinhood refresh requested');
+  } catch (e) { robinhood.status = 'error'; robinhood.error = e.message; render(); toast(e.message); return; }
+  toast('Asked Claude to refresh Robinhood. This takes a minute or two.');
+  for (let i = 0; i < 16; i++) { // about 5 minutes
+    await new Promise(r => setTimeout(r, 20000));
+    const snap = await loadRobinhood();
+    if (snap?.fetchedAt && snap.fetchedAt >= requestedAt) { robinhood.status = 'ready'; render(); toast(`Robinhood updated: ${money(+snap.totalValue || 0)}`); return; }
+  }
+  robinhood.status = 'ready'; robinhood.error = 'No new Robinhood numbers yet. They’ll appear the next time you open the app.'; render();
 }
 
 function loadConfig() { try { return { ...DEFAULT_CONFIG, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}') }; } catch { return { ...DEFAULT_CONFIG }; } }
@@ -130,7 +173,7 @@ async function connect(cfg) {
   state.config = cfg; saveConfig(cfg); checkins.status = 'idle';
   state.sync.remote = remote;
   await state.sync.start();
-  reloadData(); location.hash = '#today'; render();
+  reloadData(); location.hash = '#today'; render(); loadRobinhood();
   toast(state.sync.status === STATUS.SAVED ? `Connected to ${cfg.owner}/${cfg.repo}` : syncInfo()[0]);
 }
 
@@ -141,6 +184,7 @@ function download(name, bytes, type) {
 }
 
 /* ---------- screens ---------- */
+const rhCtx = () => state.config.token ? { ...robinhood, onRefresh: refreshRobinhood } : null;
 const SCREENS = {
   today: { render: v => {
     if (!state.data.loans.length) return emptyState(v, 'Today');
@@ -165,8 +209,8 @@ const SCREENS = {
     onExportJson: () => download(`planner-${todayISO()}.json`, JSON.stringify({ app: 'loan-payoff', exportedAt: new Date().toISOString(), ...state.data }, null, 2), 'application/json'),
   }) },
   plan: { render: v => state.data.loans.length ? renderPlan(v, { data: state.data, start, colorOf, save }) : emptyState(v, 'Plan') },
-  wealth: { render: v => renderWealth(v, { data: state.data, start, save }, 'wealth') },
-  accounts: { render: v => renderWealth(v, { data: state.data, start, save }, 'accounts') },
+  wealth: { render: v => renderWealth(v, { data: state.data, start, save, robinhood: rhCtx() }, 'wealth') },
+  accounts: { render: v => renderWealth(v, { data: state.data, start, save, robinhood: rhCtx() }, 'accounts') },
   cashflow: { render: v => renderMoney(v, { data: state.data, start, save }) },
   loans: { render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save, onLogPayment: logPayment }); } },
 };
@@ -225,3 +269,4 @@ if (!state.data.loans.length && !remote && ['localhost', '127.0.0.1'].includes(l
   if (data?.loans?.length) { state.data = normalize(data); state.sync.commit(state.data, 'Imported from local file'); }
 }
 render();
+loadRobinhood();

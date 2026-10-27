@@ -1,6 +1,6 @@
 // Wealth math tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan } from '../js/wealth.js';
+import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood } from '../js/wealth.js';
 import { defaultPlan, ym, simulate } from '../js/engine.js';
 
 const START = ym('2026-10');
@@ -107,4 +107,31 @@ test('next dollar: a known employer match ranks before extra loan payments', () 
   const keys = steps.map(s => s.key);
   ok(keys.indexOf('match') < keys.indexOf('loans'));
   eq(steps.find(s => s.key === 'match').status, 'now');
+});
+
+const snap = (fetchedAt, accts) => ({ version: 1, source: 'robinhood', fetchedAt, accounts: accts });
+test('a Robinhood snapshot becomes Synced accounts, IRAs as retirement', () => {
+  const { accounts, changed } = mergeRobinhood([acct('c', 'bank', 1000)], snap('2026-10-27T20:12:14Z', [
+    { last4: '2885', type: 'individual', retirement: false, totalValue: 3019.004 }, { last4: '7354', type: 'roth_ira', retirement: true, totalValue: 5562.09 }]));
+  eq(changed, true); eq(accounts.length, 3);
+  const b = accounts.find(a => a.id === 'rh-2885'), r = accounts.find(a => a.id === 'rh-7354');
+  eq(b.kind, 'brokerage'); eq(b.balance, 3019); eq(b.source, 'robinhood'); eq(b.updatedAt, '2026-10-27');
+  eq(r.kind, 'retirement'); ok(/Roth IRA/.test(r.name), r.name);
+  eq(netWorth(accounts, []).retirement, 5562.09);
+});
+
+test('the same snapshot twice changes nothing; a newer one updates balance and history but keeps your name', () => {
+  const first = mergeRobinhood([], snap('2026-10-27T20:00:00Z', [{ last4: '2885', totalValue: 100 }])).accounts;
+  eq(mergeRobinhood(first, snap('2026-10-27T20:00:00Z', [{ last4: '2885', totalValue: 100 }])).changed, false);
+  const renamed = first.map(a => ({ ...a, name: 'My stocks' }));
+  const { accounts, changed } = mergeRobinhood(renamed, snap('2026-10-28T13:00:00Z', [{ last4: '2885', totalValue: 120 }]));
+  eq(changed, true); eq(accounts[0].name, 'My stocks'); eq(accounts[0].balance, 120); eq(accounts[0].history.length, 2);
+  eq(mergeRobinhood(accounts, snap('2026-10-27T20:00:00Z', [{ last4: '2885', totalValue: 100 }])).changed, false, 'an older snapshot is ignored;');
+});
+
+test('a missing or malformed snapshot leaves accounts alone', () => {
+  const list = [acct('c', 'bank', 1)];
+  eq(mergeRobinhood(list, null).changed, false);
+  eq(mergeRobinhood(list, { source: 'other', accounts: [] }).changed, false);
+  eq(mergeRobinhood(list, snap('2026-10-27T00:00:00Z', [{ totalValue: 5 }])).changed, false);
 });

@@ -27,6 +27,32 @@ export const ACCOUNT_KINDS = {
   debt: { label: 'Other debt', short: 'Debt' },
 };
 
+// Folds a Robinhood snapshot (wealth/robinhood.json, written by the cloud routine) into the account list.
+// One Synced account per Robinhood account, keyed by its last 4 digits; IRAs count as retirement. Names you change are kept.
+// Returns { accounts, changed } so the app only saves when the snapshot brought something new.
+export const RH_PREFIX = 'rh-';
+export function mergeRobinhood(accounts = [], snap) {
+  if (!snap || snap.source !== 'robinhood' || !Array.isArray(snap.accounts) || !snap.fetchedAt) return { accounts, changed: false };
+  const date = String(snap.fetchedAt).slice(0, 10);
+  let changed = false;
+  const next = accounts.map(a => ({ ...a }));
+  snap.accounts.forEach((s, i) => {
+    const last4 = String(s.last4 || '').slice(-4);
+    if (!last4) return;
+    const id = RH_PREFIX + last4, balance = Math.round((+s.totalValue || 0) * 100) / 100;
+    const kind = s.retirement ? 'retirement' : 'brokerage';
+    const ex = next.find(a => a.id === id);
+    if (ex && (ex.updatedAt > date || (ex.updatedAt === date && +ex.balance === balance && ex.kind === kind))) return; // nothing new
+    const history = [...((ex?.history) || []).filter(h => h.date !== date), { date, balance }].sort((x, y) => x.date.localeCompare(y.date));
+    const label = s.retirement ? (/roth/i.test(s.type) ? 'Roth IRA' : 'IRA') : 'Investing';
+    const acct = { ...(ex || { name: `Robinhood ${label} ··${last4}`, institution: 'Robinhood', notes: '', rate: 0, minPayment: 0, order: 100 + i }),
+      id, kind, balance, source: 'robinhood', updatedAt: date, history };
+    if (ex) Object.assign(ex, acct); else next.push(acct);
+    changed = true;
+  });
+  return { accounts: next, changed };
+}
+
 const money = n => (n < -0.004 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
 const owedOf = l => (+l.balance || 0) + (+l.unpaid || 0);
 const pctTxt = r => `${(+r).toFixed(2).replace(/\.?0+$/, '')}%`;
