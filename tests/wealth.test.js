@@ -1,6 +1,6 @@
 // Wealth math tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood, cushion, monthAction } from '../js/wealth.js';
+import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood, cushion, monthAction, stability, cushionAt, habits, outlook } from '../js/wealth.js';
 import { defaultPlan, ym, simulate } from '../js/engine.js';
 
 const START = ym('2026-10');
@@ -137,26 +137,27 @@ test('a missing or malformed snapshot leaves accounts alone', () => {
 });
 
 const tuition = (month, amount = 3000, extra = {}) => ({ id: 'tu', label: 'Spring tuition', amount, month, ...extra });
-test('the cushion holds back cash for a planned cost, so nothing is "spare" yet', () => {
+// loans() owe about $183 a month in minimums; plan() leaves $800 after costs, so $617 a month is free for extra.
+test('Watch: a planned cost that a bad stretch could not cover means only what is due goes out this month', () => {
   const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 5730)] };
-  const c = cushion(d, START);
-  eq(c.amount, 0); eq(c.heldBack, 2130); eq(c.upcoming.length, 1);
+  const st = stability(d, START);
+  eq(st.level, 'watch'); eq(st.safe, 0);
   eq(emergencyFund(d.accounts, d.plan, START).target, 3600, 'the one-time cost does not inflate the emergency fund;');
-  eq(spareCash(d, START), 0);
   const a = monthAction(d, START);
-  eq(a.kind, 'over', 'January leaves cash $253 under the cushion, so: pay only what is due and save;');
-  ok(/\$253 below/.test(a.detail) && /Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
+  eq(a.kind, 'watch'); ok(/^Send \$18\d and keep the rest$/.test(a.title), a.title);
+  near(a.kept, 617, 2); ok(/Spring tuition \$3,000 in Jan 2027/.test(a.detail) && /in Jan 2027/.test(a.detail), a.detail);
+  ok(st.normal.months[1].send > 0, 'later months still send extra in the normal projection');
 });
 
-test('with enough cash, only what is left after the cushion and the planned cost is safe', () => {
+test('Stable with room: the safe extra keeps the cushion and the planned cost even in a bad stretch', () => {
   const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 9000)] };
-  const c = cushion(d, START);
-  ok(c.amount > 0 && c.amount < 9000 - 3600 - 2000, `safe ${c.amount}`);
-  ok(c.low.cash - c.amount >= c.target - 1, 'after paying it, the low point still covers the emergency fund');
+  const st = stability(d, START);
+  eq(st.level, 'stable'); eq(st.safe, 2500, 'bad stretch: Jan 2027 cash ≈ $6,148, $2,548 over the $3,600 cushion;');
   const a = monthAction(d, START);
-  eq(a.kind, 'can-use-savings');
+  eq(a.kind, 'safe-extra'); eq(a.action.prefill.amount, 2500); eq(a.action.prefill.loanId, 'priv');
+  ok(/^Safe to pay \$2,500 extra on Private 10%$/.test(a.title), a.title);
   const used = monthAction({ ...d, plan: { ...d.plan, useSpareCash: true } }, START);
-  eq(used.kind, 'use-savings'); near(used.fromSavings, c.amount, 1); near(used.fromIncome, 800, 1);
+  eq(used.kind, 'stable'); ok(used.pay > 2500, `${used.pay}`);
 });
 
 test('a paid planned cost no longer holds anything back', () => {
@@ -169,20 +170,33 @@ test('a future loan is not counted as owed yet', () => {
   eq(netWorth([], ls).studentLoans, 14900);
 });
 
-test('when the plan’s extra would eat into the cushion, this month says what to send instead', () => {
+test('the plan’s extra from savings is held back when the cushion needs it', () => {
   const d = { loans: loans(), plan: plan({ extraMonthly: 250, planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 5000)] };
   const a = monthAction(d, START);
-  eq(a.kind, 'over'); ok(/^Send just the \$\d+ due this month and save \$\d+/.test(a.title), a.title);
-  ok(a.comfy < 300 && a.keep > 500, `${a.comfy} / ${a.keep}`);
-  ok(/Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
-  const fine = monthAction({ ...d, accounts: [acct('c', 'bank', 20000)] }, START);
-  ok(fine.kind !== 'over', fine.kind);
+  eq(a.kind, 'watch'); ok(/^Send \$18\d and keep the rest$/.test(a.title), a.title);
+  eq(monthAction({ ...d, accounts: [acct('c', 'bank', 20000)] }, START).level, 'stable');
 });
 
-test('if a planned cost breaks the cushion even with no extra, this month says to pay only what is due and save', () => {
+test('Tight: when even a normal stretch breaks the cushion, send only what is due and save', () => {
   const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), accounts: [acct('c', 'bank', 4000)] };
   const a = monthAction(d, START);
-  eq(a.kind, 'over'); ok(/below your \$3,600 emergency fund/.test(a.detail), a.detail);
-  ok(/Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
-  ok(monthAction({ ...d, accounts: [acct('c', 'bank', 7000)] }, START).kind !== 'over', 'enough cash covers both');
+  eq(a.kind, 'tight'); ok(/^Send just the \$18\d due and save the rest$/.test(a.title), a.title);
+  ok(/under your \$3,600 cushion/.test(a.detail) && /Spring tuition \$3,000 in Jan 2027/.test(a.detail), a.detail);
+  eq(monthAction({ ...d, accounts: [acct('c', 'bank', 7000)] }, START).level, 'stable');
+});
+
+test('in school the cushion is a $1,000 starter; after graduation it is 3 months of costs', () => {
+  const p = plan({ gradMonth: '2027-05', expenses: [{ amount: 750, start: '2026-01', end: '2027-05' }, { amount: 1200, start: '2027-06' }] });
+  eq(cushionAt(p, START).target, 1000); eq(cushionAt(p, ym('2027-05')).target, 1000);
+  eq(cushionAt(p, ym('2027-06')).target, 3600); eq(cushionAt({ ...p, emergencyStarter: 1500 }, START).target, 1500);
+});
+
+test('real habits scale the projection once a full month is tracked', () => {
+  const tx = (date, amount, dir, category = 'Food') => ({ id: date + amount + dir, date, amount, dir, category, kind: 'logged', createdAt: date });
+  const d = { loans: loans(), plan: plan(), accounts: [acct('c', 'bank', 5000)], checkins: [{ date: '2026-08-31', real: 5000, estimated: 5000, unlogged: 0 }],
+    transactions: [tx('2026-09-15', 1800, 'in', 'Paycheck'), tx('2026-09-20', 1500, 'out')] };
+  const h = habits(d, START);
+  eq(h.months, 1); near(h.incomeRatio, 0.9, 1e-9); near(h.costsRatio, 1.25, 1e-9);
+  near(outlook(d, START).months[0].costs, 1500, 1e-9);
+  eq(habits({ ...d, checkins: [], transactions: [tx('2026-09-15', 10, 'out')] }, START).months, 0, 'September only partly tracked;');
 });

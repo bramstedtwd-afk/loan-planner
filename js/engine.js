@@ -28,7 +28,7 @@ export const STRATEGIES = [
 ];
 
 export const defaultPlan = () => ({ strategy: 'avalanche', autopay: false, extraMonthly: 0, gradMonth: '', share: 100, refi: { on: false, rate: 5.5 }, customOrder: [], incomes: [], expenses: [], lumps: [], planned: [],
-  emergencyMonths: 3, assumedReturn: 6, employerMatch: null, strategyOverride: null, dismissed: {}, useSpareCash: false,
+  emergencyMonths: 3, emergencyStarter: 1000, assumedReturn: 6, employerMatch: null, strategyOverride: null, dismissed: {}, useSpareCash: false,
   categories: { out: ['Food', 'Housing', 'Transport', 'School', 'Subscriptions', 'Fun', 'Other'], in: ['Paycheck', 'Gift', 'Refund', 'Other'] } });
 
 // Older plans stored weekly "phases" (income + expenses + share); convert them to income sources and monthly costs.
@@ -118,7 +118,8 @@ export function simulate(loans, plan, strategy, { start = nowYM() } = {}) {
     }
     const active = ls.filter(l => owed(l) >= 0.005);
     const minsDue = active.reduce((s, l) => s + (m >= l.repay ? Math.min(l.min, owed(l)) : 0), 0);
-    const budget = strategy === 'minimum' ? 0 : monthlyBudget(plan, m) + Math.max(0, +plan.extraMonthly || 0);
+    const planned = plan.budgets?.[ymStr(m)]; // cushion-first budgets from wealth.effectivePlan, when a bank balance is known
+    const budget = strategy === 'minimum' ? 0 : planned != null ? planned : monthlyBudget(plan, m) + Math.max(0, +plan.extraMonthly || 0);
     const lump = strategy === 'minimum' ? 0 : lumpsAt(plan, m);
     const incomeOn = cashFlow(plan, m).inc.length > 0;
     if (strategy !== 'minimum' && incomeOn && budget + 0.01 < minsDue) { shortfalls++; if (firstShortfall == null) firstShortfall = m; }

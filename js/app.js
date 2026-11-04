@@ -158,9 +158,11 @@ function toast(msg, undo) {
 }
 
 /* ---------- actions ---------- */
-const logPayment = () => {
+// prefill: { loanId, amount } to open on one loan and amount (Today's "Pay $X extra"); otherwise this month's plan.
+const logPayment = prefill => {
   if (!state.data.loans.length) { toast('Add your loans first.'); return; }
-  openLogPayment({ data: state.data, planned: plannedThisMonth(), onSave: (next, message, msg) => save(next, message, msg) });
+  const planned = prefill?.loanId ? { [prefill.loanId]: prefill.amount } : plannedThisMonth();
+  openLogPayment({ data: state.data, planned, onSave: (next, message, msg) => save(next, message, msg) });
 };
 
 function removePayment(p) {

@@ -38,7 +38,16 @@ export function renderToday(view, ctx) {
   const pin = r.done && grad != null && grad > start && grad < end ? (grad - start) / (end - start) : null;
 
   // best move and to-dos
-  const act = monthAction(data, start);
+  const act = monthAction(data, start), st = act.stability;
+  const verdict = { stable: ['Stable', 'good'], watch: ['Watch', 'warn'], tight: ['Tight', 'crit'] }[st.level];
+  // the reasons behind the verdict, a few plain numbers
+  const h = st.habits, pctOf = x => `${Math.round(x * 100)}%`;
+  const reasons = st.hasBank ? [
+    ['Runway', st.runwayMonths != null ? `<b>${st.runwayMonths.toFixed(1)} months</b> of costs in the bank (${money(st.cash)})` : `${money(st.cash)} in the bank`],
+    ['Lowest point', `<b>${money(Math.max(0, st.normal.lowSaved.cash))}</b> in ${ymLabel(Math.max(start, st.normal.lowSaved.m))}; bad stretch <b>${money(Math.max(0, st.bad.lowSaved.cash))}</b> (cushion ${money(st.target)}${st.cushion.mode === 'starter' ? ' while in school' : ''})`],
+    ['Real vs plan', h.months ? `Last ${h.months} month${h.months > 1 ? 's' : ''}: income <b>${pctOf(h.incomeRatio)}</b> of plan, spending <b>${pctOf(h.costsRatio)}</b>` : 'No full month tracked yet, so this uses your plan. Keep logging in Spending.'],
+    ...(st.level !== 'stable' && st.backstop > 0 ? [['Backstop', `${money(st.backstop)} in Robinhood (not the IRA), if ever needed`]] : []),
+  ] : [];
   const move = bestMove(data, results, strategy, start);
   const monthKey = ymStr(start);
   const done = new Set(plan.dismissed?.[monthKey] || []);
@@ -64,14 +73,11 @@ export function renderToday(view, ctx) {
 
     <div class="board">
       <section class="card glass move rise" aria-label="This month">
-        <div class="card-h" style="margin:0"><span class="spark" aria-hidden="true"><svg class="i"><use href="#i-send"/></svg></span><span class="badge ${act.kind === 'over' ? 'warn' : ''}">This month</span></div>
+        <div class="card-h" style="margin:0"><span class="spark" aria-hidden="true"><svg class="i"><use href="#i-send"/></svg></span>${verdict ? `<span class="badge ${verdict[1]}">${verdict[0]}</span>` : ''}<span class="badge" style="background:var(--hairline);color:var(--ink-2)">This month</span></div>
         <h3>${esc(act.title)}</h3>
         <p class="muted small" style="margin:0">${esc(act.detail)}</p>
-        ${act.kind !== 'no-bank' && act.cushion.target > 0 ? `<div class="gain">
-          <div><span>Cash now</span><b class="num">${money(act.cushion.cash)}</b></div>
-          <div><span>Cushion kept</span><b class="num">${money(act.cushion.target)}</b></div>
-          ${act.cushion.upcoming.length ? `<div><span>Set aside</span><b class="num">${money(act.cushion.upcoming.reduce((s, p) => s + (+p.amount || 0), 0))}</b></div>` : `<div><span>Safe extra</span><b class="num ${act.safe ? 'pos' : ''}">${money(act.safe)}</b></div>`}</div>` : '<div style="height:14px"></div>'}
-        <div class="actions">${act.action ? act.action.log ? '<button class="btn primary" type="button" data-log>Log a payment</button>' : `<a class="btn primary" href="${act.action.href}">${esc(act.action.label)}</a>` : ''}</div>
+        ${act.kind !== 'no-bank' ? `<ul class="reasons">${reasons.map(([k, v]) => `<li><span>${k}</span><div>${v}</div></li>`).join('')}</ul>` : ''}
+        <div class="actions" style="margin-top:14px">${act.action ? act.action.prefill ? `<button class="btn primary" type="button" data-prefill>${esc(act.action.label)}</button>` : act.action.log ? '<button class="btn primary" type="button" data-log>Log a payment</button>' : `<a class="btn primary" href="${act.action.href}">${esc(act.action.label)}</a>` : ''}</div>
       </section>
       ${move ? `<section class="card glass move rise" aria-label="Could save more">
         <div class="card-h" style="margin:0"><span class="spark" aria-hidden="true"><svg class="i"><use href="#i-spark"/></svg></span><span class="badge warn">Could save more</span></div>
@@ -93,7 +99,8 @@ export function renderToday(view, ctx) {
     </div>`;
 
   view.querySelector('[data-try]')?.addEventListener('click', () => onApplyMove(move.apply));
-  view.querySelector('[data-log]')?.addEventListener('click', onLogPayment);
+  view.querySelector('[data-log]')?.addEventListener('click', () => onLogPayment());
+  view.querySelector('[data-prefill]')?.addEventListener('click', () => onLogPayment(act.action.prefill));
   view.querySelectorAll('[data-todo]').forEach(cb => cb.addEventListener('change', () => {
     const keys = new Set(plan.dismissed?.[monthKey] || []);
     cb.checked ? keys.add(cb.dataset.todo) : keys.delete(cb.dataset.todo);

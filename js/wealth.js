@@ -1,99 +1,183 @@
 // Wealth math: net worth, emergency fund, the recommended "best route" for loans, and the next-dollar ranking.
 // Pure functions over { loans, plan, accounts }. These are rule-based comparisons with the reasoning shown, not personal advice.
 import { ym, ymStr, ymLabel, nowYM, simulate, cashFlow, owedNow, STRATEGIES } from './engine.js';
+import { ledger, monthSummary } from './tracker.js';
 
 export const SAVINGS_LUMP = 'Savings above your emergency fund';
 
-// The cushion check: walk your bank cash forward month by month (income in; costs, planned one-time costs and the plan's
-// loan payments out) and find the lowest point. Only cash that keeps that low point at or above the emergency fund is safe
-// to put toward loans now. Rounded down to $50, never more than what's owed. Worked out live from your balances, so once
-// you pay it and update your bank balance it drops to zero by itself.
-export function cushion(data, start = nowYM()) {
+// ---------- stability: one projection drives the cushion, the cushion-first route, the safe extra and the verdict ----------
+export const BAD_CASE = { income: 0.8, costs: 1.15 };
+const HABIT_MONTHS = 3;
+const clampRatio = x => Math.min(3, Math.max(0.3, x));
+const validStrategy = plan => STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
+const banksOf = data => (data.accounts || []).filter(a => a.kind === 'bank');
+const bankCash = data => banksOf(data).reduce((s, a) => s + (+a.balance || 0), 0);
+
+// The cushion to protect in month m: a fixed starter fund while in school, then N months of costs after graduation
+// (sized on the highest costs in the 12 months from then, so it still holds if costs go up).
+export function cushionAt(plan, m) {
+  const grad = ym(plan.gradMonth);
+  if (grad != null && m <= grad) return { target: +plan.emergencyStarter || 1000, mode: 'starter', months: null, monthlyCosts: null };
+  const months = +plan.emergencyMonths || 3, from = Math.max(m, grad != null ? grad + 1 : m);
+  let monthlyCosts = 0;
+  for (let k = from; k < from + 12; k++) monthlyCosts = Math.max(monthlyCosts, cashFlow(plan, k).costs);
+  return { target: months * monthlyCosts, mode: 'months', months, monthlyCosts };
+}
+
+// Your real habits: the last few complete months you tracked, compared with the plan for those months.
+// Each future month's planned income and costs are scaled by these ratios ("real averages replace the plan").
+export function habits(data, start = nowYM()) {
+  const tracked = ledger(data).map(e => e.date).filter(Boolean).concat((data.checkins || []).map(c => c.date)).sort()[0];
+  const out = { months: 0, incomeRatio: 1, costsRatio: 1, actualIn: 0, actualOut: 0, plannedIn: 0, plannedOut: 0, window: [] };
+  if (!tracked) return out;
+  for (let m = start - HABIT_MONTHS; m < start; m++) {
+    if (`${ymStr(m)}-01` < tracked) continue; // only months tracked from their first day
+    const s = monthSummary(data, ymStr(m)), cf = cashFlow(data.plan || {}, m);
+    out.window.push(ymStr(m)); out.months++;
+    out.actualIn += s.in;
+    out.actualOut += s.entries.filter(e => e.dir === 'out' && e.source === 'log').reduce((t, e) => t + e.amount, 0); // loan payments and planned costs are modeled on their own
+    out.plannedIn += cf.income; out.plannedOut += cf.costs;
+  }
+  if (out.months) {
+    if (out.plannedIn > 0) out.incomeRatio = clampRatio(out.actualIn / out.plannedIn);
+    if (out.plannedOut > 0) out.costsRatio = clampRatio(out.actualOut / out.plannedOut);
+  }
+  return out;
+}
+
+// Month-by-month bank cash: income in; costs, planned one-time costs, loan minimums and the plan's extra sends out.
+// Cushion first: extra goes to loans only when every month in the look-ahead (12 months, or through the last planned
+// cost) still keeps the cushion. Returns the months, the sends, and the lowest point against the cushion.
+export function outlook(data, start = nowYM(), { bad = false, sends = null, lump = 0 } = {}) {
   const plan = data.plan || {}, loans = data.loans || [];
-  const ef = emergencyFund(data.accounts || [], plan, start);
-  const base = { ...plan, useSpareCash: false };
-  const st = STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
-  const r = simulate(loans, base, st, { start });
+  const h = habits(data, start);
+  const inMul = h.incomeRatio * (bad ? BAD_CASE.income : 1), costMul = h.costsRatio * (bad ? BAD_CASE.costs : 1);
+  const mins = simulate(loans, { ...plan, budgets: null, extraMonthly: 0, lumps: [] }, 'minimum', { start });
   const open = (plan.planned || []).filter(p => !p.paidOn && ym(p.month) != null);
-  const overdue = open.filter(p => ym(p.month) < start);
-  const horizon = Math.min(start + 36, Math.max(start + 12, ...open.map(p => ym(p.month) + 1)));
-  let cash = ef.cash, low = { m: start - 1, cash }, shortTotal = 0;
-  for (let m = start; m < horizon; m++) {
-    const cf = cashFlow(base, m), row = r.rows.find(x => x.m === m);
-    const loanOut = row ? Math.max(0, row.paid - row.lump) : 0; // stored one-time payments (refunds, gifts) bring their own money
-    const out = cf.costs + cf.oneTime + (m === start ? overdue.reduce((s, p) => s + (+p.amount || 0), 0) : 0) + loanOut;
-    shortTotal += Math.max(0, out - cf.income);
-    cash += cf.income - out;
-    if (cash < low.cash) low = { m, cash };
+  const overdue = open.filter(p => ym(p.month) < start).reduce((s, p) => s + (+p.amount || 0), 0);
+  const lastPlanned = Math.max(start, ...open.map(p => ym(p.month)));
+  const end = Math.min(start + 240, Math.max(start + 13, lastPlanned + 2, (mins.payoffM ?? start + 240) + 2));
+  const share = plan.share == null || plan.share === '' ? 100 : +plan.share;
+  const cash0 = bankCash(data) - lump;
+  const months = [];
+  let base = cash0;
+  for (let m = start; m < end; m++) {
+    const cf = cashFlow(plan, m), row = mins.rows.find(x => x.m === m);
+    const income = cf.income * inMul, costs = cf.costs * costMul, oneTime = cf.oneTime + (m === start ? overdue : 0), due = row ? row.paid : 0;
+    const avail = Math.max(0, (income - costs - oneTime) * share / 100 - due) + Math.max(0, +plan.extraMonthly || 0);
+    base += income - costs - oneTime - due; // cash if no extra is ever sent
+    months.push({ m, income, costs, oneTime, mins: due, avail, cashIfSaved: base, target: cushionAt(plan, m).target });
   }
-  const owed = loans.reduce((s, l) => s + owedOf(l), 0);
-  const room = Math.min(ef.cash, low.cash) - ef.target;
-  const amount = room >= 100 ? Math.min(Math.floor(room / 50) * 50, Math.floor(owed)) : 0;
-  const upcoming = open.filter(p => ym(p.month) < horizon).sort((a, b) => ym(a.month) - ym(b.month));
-  return { amount, room, cash: ef.cash, target: ef.target, emergency: ef, low, horizon, upcoming, shortTotal,
-    heldBack: Math.max(0, ef.surplus - amount) }; // cash above the emergency fund that's kept for what's coming
+  // cushion-first sends, worked out on the normal case; the bad case reuses them to see what they'd do in a bad stretch
+  const S = sends || {};
+  const lastIdx = months.findIndex(y => y.m === lastPlanned);
+  let sent = 0;
+  for (let i = 0; i < months.length; i++) {
+    const x = months[i];
+    if (!sends) {
+      const reach = Math.min(months.length, Math.max(i + 13, lastIdx + 1));
+      let slack = Infinity;
+      for (let k = i; k < reach; k++) slack = Math.min(slack, months[k].cashIfSaved - sent - months[k].target);
+      x.send = Math.max(0, Math.min(x.avail, slack));
+      S[ymStr(x.m)] = x.send;
+    } else x.send = S[ymStr(x.m)] || 0;
+    sent += x.send;
+    x.cash = x.cashIfSaved - sent;
+  }
+  const horizonEnd = Math.max(start + 12, lastPlanned + 1);
+  const view = months.filter(x => x.m < horizonEnd);
+  const t0 = cushionAt(plan, start).target;
+  const lowOf = key => {
+    let low = { m: start - 1, cash: cash0, target: t0, slack: cash0 - t0 };
+    for (const x of view) if (x[key] - x.target < low.slack) low = { m: x.m, cash: x[key], target: x.target, slack: x[key] - x.target };
+    return low;
+  };
+  // low: with the sends; lowSaved: if you paused every extra payment (what the verdict and the safe extra use)
+  return { months, view, sends: S, low: lowOf('cash'), lowSaved: lowOf('cashIfSaved'), habits: h, horizonEnd, bad,
+    upcoming: open.filter(p => ym(p.month) < horizonEnd).sort((a, b) => ym(a.month) - ym(b.month)) };
 }
-export const spareCash = (data, start = nowYM()) => cushion(data, start).amount;
 
-// The one plain answer for this month: how much to send, where it comes from, and whether to keep or use savings.
-export function monthAction(data, start = nowYM()) {
+// Each case assumes you'd pause extra payments when money gets tight (only what's due keeps going out).
+// Stable: even a bad stretch (income −20%, costs +15%) keeps the cushion. Watch: only a normal stretch does.
+// Tight: even a normal stretch falls short. The safe extra is savings you can put toward loans now and still be Stable.
+export function stability(data, start = nowYM()) {
   const plan = data.plan || {}, loans = data.loans || [];
-  const st = STRATEGIES.some(s => s.id === plan.strategy) ? plan.strategy : 'avalanche';
-  const c = cushion(data, start), cf = cashFlow(plan, start);
-  const r = simulate(loans, effectivePlan(data, start), st, { start }), row = r.rows[0];
-  const hasBank = (data.accounts || []).some(a => a.kind === 'bank');
-  const spareIn = plan.useSpareCash ? c.amount : 0;
-  const pay = row?.paid || 0, mins = row?.minsDue || 0;
-  const lump = row?.lump || 0; // includes the spare-cash payment when the plan uses it
-  const fromIncome = Math.min(Math.max(0, pay - lump), Math.max(0, cf.left));
-  const fromSavings = Math.max(0, pay - fromIncome - (lump - spareIn));
-  const focus = row ? loans.filter(l => row.pay[l.id] > 0.005).sort((a, b) => row.pay[b.id] - row.pay[a.id])[0] : null;
-  const due = c.upcoming.map(p => `${p.label} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`);
-  const keepWhy = c.upcoming.length ? `It’s set aside for ${due.join(', ')}.` : c.shortTotal > 1 ? `Months ahead where costs and payments run past income need about ${money(c.shortTotal)} of it.` : '';
-  const out = { pay, fromIncome, fromSavings, mins, safe: c.amount, cushion: c, focusLoanId: focus?.id || null };
-
-  if (!hasBank) return { ...out, kind: 'no-bank', title: pay ? `Send ${money(pay)} to your loans this month` : 'Nothing is due on your loans this month',
-    detail: `${fromSavings > 0.5 ? `Only ${money(fromIncome)} is left after costs, so ${money(fromSavings)} of that would come from savings. ` : ''}Add your bank balance on Wealth so the app can check that against your emergency fund${(plan.planned || []).some(p => !p.paidOn) ? ' and your planned costs' : ''}.`, action: { label: 'Add balance', href: '#accounts' } };
-
-  const lines = [];
-  if (pay < 0.5) lines.push(`Nothing is due on your loans this month.`);
-  else lines.push(`${money(fromIncome)} from this month’s income${fromIncome < mins - 0.5 ? ' (that’s short of the minimums)' : ''}${fromSavings > 0.5 ? ` plus ${money(fromSavings)} from savings` : ''}${focus && pay > mins + 0.5 ? `, with the extra going to ${focus.name}` : ''}.`);
-  if (c.amount > 0 && plan.useSpareCash) {
-    lines.push(`The ${money(c.amount)} from savings is safe: after it you still keep your ${money(c.target)} emergency fund${c.upcoming.length ? ` and everything planned (${due.join(', ')})` : ''}.`);
-    return { ...out, kind: 'use-savings', title: `Send ${money(pay)} this month, ${money(c.amount)} of it from savings`, detail: lines.join(' '), action: { label: 'Log a payment', log: true } };
-  }
-  if (c.amount > 0) {
-    lines.push(`You could also safely put ${money(c.amount)} of savings toward loans now and still keep your emergency fund${c.upcoming.length ? ` and what’s planned` : ''}.`);
-    return { ...out, kind: 'can-use-savings', title: `Send ${money(pay)} this month; ${money(c.amount)} more is safe to add`, detail: lines.join(' '), action: { label: 'See the plan', href: '#plan' } };
-  }
-  // Short of the cushion even before any extra: pay only what's due and keep the rest of this month's income as savings.
-  if (c.room < 0 && pay > mins + 0.5) {
-    // Measure the gap without the plan's own extra from savings, since the advice is to stop that.
-    const g = +plan.extraMonthly > 0 ? cushion({ ...data, plan: { ...plan, extraMonthly: 0 } }, start) : c;
-    const gap = Math.max(0, -g.room), keep = Math.max(0, fromIncome - mins), months = keep > 0.5 && gap > 0 ? Math.ceil(gap / keep) : null;
-    const why = gap > 0
-      ? `${g.upcoming.length ? `After ${due.join(', ')}, your` : 'Your'} cash would drop to about ${money(Math.max(0, g.low.cash))} in ${ymLabel(g.low.m)}, ${money(gap)} below your ${money(c.target)} emergency fund.`
-      : `Your plan’s extra would pull your cash below your ${money(c.target)} emergency fund${c.upcoming.length ? ` once ${due.join(', ')} is paid` : ''}.`;
-    return { ...out, kind: 'over', comfy: mins, keep,
-      title: mins > 0.5 ? `Send just the ${money(mins)} due this month${keep > 0.5 ? ` and save ${money(keep)}` : ''}` : `Don’t send extra this month${keep > 0.5 ? `; save the ${money(keep)}` : ''}`,
-      detail: `${why} ${keep > 0.5 ? `Keeping this month’s ${money(keep)} in savings instead of paying extra rebuilds that cushion${months ? `; at this pace it takes about ${months} month${months === 1 ? '' : 's'}` : ''}. ` : ''}${fromSavings > 0.5 ? `Your plan also takes ${money(fromSavings)} a month from savings for extra payments, which would make the gap bigger. ` : ''}Extra loan payments make sense again once the cushion is covered. To make the plan match, lower “Send to loans” in Wealth → Cash flow or the extra on the Plan tab.`,
-      action: { label: 'Adjust the plan', href: '#cashflow' } };
-  }
-  if (fromSavings > 0.5) lines.push(`Taking that from savings is fine: your cash still covers your ${money(c.target)} emergency fund${c.upcoming.length ? ` and ${due.join(', ')}` : ''}.`);
-  else if (c.heldBack >= 100) lines.push(`Keep your savings for now. You have ${money(c.heldBack)} above your emergency fund, and it’s spoken for. ${keepWhy}`);
-  else if (c.cash < c.target) lines.push(`Keep your savings: your ${money(c.cash)} is still building toward the ${money(c.target)} emergency fund.`);
-  else lines.push('Keep your savings where they are; there’s nothing extra to spare yet.');
-  return { ...out, kind: fromSavings > 0.5 ? 'savings-ok' : 'keep',
-    title: pay < 0.5 ? 'Keep your savings this month' : fromSavings > 0.5 ? `Send ${money(pay)} this month, ${money(fromSavings)} of it from savings` : `Send ${money(pay)} this month and keep your savings`,
-    detail: lines.join(' '), action: pay > 0.5 ? { label: 'Log a payment', log: true } : null };
+  const hasBank = banksOf(data).length > 0;
+  const badBefore = outlook(data, start, { bad: true });
+  const owed = loans.reduce((s, l) => s + owedOf(l), 0);
+  const room = badBefore.lowSaved.slack;
+  const safe = hasBank && room >= 100 ? Math.min(Math.floor(room / 50) * 50, Math.floor(owed)) : 0;
+  const lump = plan.useSpareCash ? safe : 0;
+  const b = lump ? outlook(data, start, { bad: true, lump }) : badBefore;
+  // Future months are projected on the normal case, but this month's extra must also be safe in a bad stretch.
+  const S = { ...outlook(data, start, { lump }).sends }, k0 = ymStr(start);
+  S[k0] = Math.min(S[k0] || 0, b.sends[k0] || 0);
+  const n = outlook(data, start, { lump, sends: S });
+  const normal = n;
+  const level = !hasBank ? null : b.lowSaved.slack >= -0.5 ? 'stable' : n.lowSaved.slack >= -0.5 ? 'watch' : 'tight';
+  const cash = bankCash(data);
+  const nowCosts = normal.months[0] ? normal.months[0].costs : cashFlow(plan, start).costs;
+  const backstop = (data.accounts || []).filter(a => a.kind === 'brokerage').reduce((s, a) => s + (+a.balance || 0), 0);
+  const ef = cushionAt(plan, start);
+  return { level, hasBank, cash, target: ef.target, cushion: ef, normal: n, bad: b, safe, room, lumpInPlan: lump, owed,
+    runwayMonths: nowCosts > 0 ? cash / nowCosts : null, backstop, habits: normal.habits };
 }
 
-// The plan as the simulator should see it: with "use spare cash" on, today's spare cash goes in this month as a one-time payment.
+// The summary the screens use: what's safe now, what's held back, and what it's held for.
+export function cushion(data, start = nowYM()) {
+  const st = stability(data, start), o = st.normal;
+  const shortTotal = o.view.reduce((s, x) => s + Math.max(0, x.costs + x.oneTime + x.mins - x.income), 0);
+  return { amount: st.safe, room: st.room, cash: st.cash, target: st.target, low: st.bad.lowSaved, horizon: o.horizonEnd, upcoming: o.upcoming, shortTotal,
+    heldBack: Math.max(0, st.cash - st.target - st.safe), level: st.level, stability: st };
+}
+export const spareCash = (data, start = nowYM()) => stability(data, start).safe;
+
+// The plan as the simulator sees it. With a bank balance known, extra goes to loans cushion-first (each month only what
+// the cushion can spare), and with "use spare cash" on, today's safe extra goes in this month as a one-time payment.
 export function effectivePlan(data, start = nowYM()) {
   const plan = data.plan || {};
-  if (!plan.useSpareCash) return plan;
-  const amt = spareCash(data, start);
-  return amt ? { ...plan, lumps: [...(plan.lumps || []), { month: ymStr(start), label: SAVINGS_LUMP, amount: amt }] } : plan;
+  if (!banksOf(data).length) return plan;
+  const st = stability(data, start);
+  const budgets = Object.fromEntries(st.normal.months.map(x => [ymStr(x.m), x.mins + x.send]));
+  const p = { ...plan, budgets, extraMonthly: 0 };
+  return st.lumpInPlan ? { ...p, lumps: [...(plan.lumps || []), { month: ymStr(start), label: SAVINGS_LUMP, amount: st.lumpInPlan }] } : p;
+}
+
+// The one plain answer for this month, built on the verdict: how much to send, whether extra is safe, and why.
+export function monthAction(data, start = nowYM()) {
+  const plan = data.plan || {}, loans = data.loans || [];
+  const st = stability(data, start), o = st.normal, now = o.months[0];
+  const r = simulate(loans, effectivePlan(data, start), validStrategy(plan), { start }), row = r.rows[0];
+  const pay = row?.paid || 0, mins = row?.minsDue || 0;
+  // where extra would go: the loan your strategy sends a one-time payment to
+  const attack = validStrategy(plan) === 'minimum' ? 'avalanche' : validStrategy(plan);
+  const probe = simulate(loans, { ...plan, budgets: { [ymStr(start)]: 0 }, extraMonthly: 0, lumps: [{ month: ymStr(start), amount: 1 }] }, attack, { start });
+  const extraOn = id => (probe.rows[0]?.pay[id] || 0) - Math.min(probe.loans.find(l => l.id === id)?.min || 0, probe.init[id] || 0);
+  const target = loans.filter(l => extraOn(l.id) > 0.5).sort((a, b) => extraOn(b.id) - extraOn(a.id))[0] || null;
+  const due = o.upcoming.map(p => `${p.label} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`);
+  const left = now ? now.income - now.costs - now.oneTime : 0, kept = now ? Math.max(0, now.avail - now.send) : 0;
+  const out = { pay, mins, safe: st.safe, level: st.level, stability: st, focusLoanId: target?.id || null, kept };
+
+  if (!st.hasBank) return { ...out, kind: 'no-bank', title: pay ? `Send ${money(pay)} to your loans this month` : 'Nothing is due on your loans this month',
+    detail: `Add your bank balance on Wealth so the app can check your cushion${(plan.planned || []).some(p => !p.paidOn) ? ' and your planned costs' : ''} before suggesting anything extra.`, action: { label: 'Add balance', href: '#accounts' } };
+
+  const sendLine = pay < 0.5 ? 'Nothing is due on your loans this month.' : `Send ${money(pay)} this month${mins > 0.5 ? ` (${money(mins)} is due)` : ''}.`;
+  const keepLine = kept > 0.5 ? ` Keep ${money(kept)} of the ${money(Math.max(0, left))} left over in savings${due.length ? ` for ${due.join(', ')}` : ''} so your ${money(st.target)} cushion holds.` : '';
+  if (st.level === 'stable' && st.safe > 0 && !plan.useSpareCash) return { ...out, kind: 'safe-extra',
+    title: `Safe to pay ${money(st.safe)} extra on ${target?.name || 'your loans'}`,
+    detail: `${sendLine} On top of that, ${money(st.safe)} of savings is safe: even in a bad stretch (income −20%, costs +15%) you keep your ${money(st.target)} cushion${due.length ? ` and cover ${due.join(', ')}` : ''} through ${ymLabel(o.horizonEnd - 1)}.`,
+    action: { label: `Pay ${money(st.safe)} extra`, prefill: { loanId: target?.id, amount: st.safe } } };
+  if (st.level === 'stable') return { ...out, kind: 'stable', title: pay > 0.5 ? `Send ${money(pay)} this month` : 'Nothing to send this month',
+    detail: `${sendLine}${st.lumpInPlan ? ` ${money(st.lumpInPlan)} of it is savings you can safely spare.` : ''}${keepLine} Even in a bad stretch you stay above your cushion.`,
+    action: pay > 0.5 ? { label: 'Log a payment', log: true } : null };
+  const badLow = st.bad.lowSaved;
+  if (st.level === 'watch') return { ...out, kind: 'watch', title: pay > 0.5 ? `Send ${money(pay)} and keep the rest` : 'Keep your savings this month',
+    detail: `${sendLine}${keepLine} No extra yet: in a bad stretch (income −20%, costs +15%) your cash would dip to ${money(Math.max(0, badLow.cash))} in ${ymLabel(badLow.m)}, ${money(-badLow.slack)} under your cushion.`,
+    action: pay > 0.5 ? { label: 'Log a payment', log: true } : null };
+  const nLow = st.normal.lowSaved;
+  return { ...out, kind: 'tight', title: mins > 0.5 ? `Send just the ${money(mins)} due and save the rest` : 'Don’t send extra; save what’s left',
+    detail: `Even as planned, your cash drops to ${money(Math.max(0, nLow.cash))} in ${ymLabel(nLow.m)}, ${money(-nLow.slack)} under your ${money(st.target)} cushion${due.length ? `, after ${due.join(', ')}` : ''}. Keep every spare dollar in savings until that’s covered.`,
+    action: mins > 0.5 ? { label: 'Log a payment', log: true } : { label: 'See cash flow', href: '#cashflow' } };
 }
 
 export const ACCOUNT_KINDS = {
@@ -141,13 +225,13 @@ export function netWorth(accounts = [], loans = []) {
   return { cash, investments, retirement, otherDebt, studentLoans, assets, debts, net: assets - debts };
 }
 
-// The cushion is sized on the highest monthly costs in the next 12 months, so it still holds if costs go up.
+// The emergency fund right now: a fixed starter while in school, then N months of costs (see cushionAt).
 export function emergencyFund(accounts = [], plan = {}, start = nowYM()) {
-  const months = +plan.emergencyMonths || 3;
+  const c = cushionAt(plan, start);
   let monthlyCosts = 0;
   for (let m = start; m < start + 12; m++) monthlyCosts = Math.max(monthlyCosts, cashFlow(plan, m).costs);
-  const cash = netWorth(accounts).cash, target = months * monthlyCosts;
-  return { months, monthlyCosts, target, cash, gap: Math.max(0, target - cash), surplus: Math.max(0, cash - target),
+  const cash = netWorth(accounts).cash, target = c.target;
+  return { months: c.months ?? (+plan.emergencyMonths || 3), mode: c.mode, monthlyCosts, target, cash, gap: Math.max(0, target - cash), surplus: Math.max(0, cash - target),
     runwayMonths: monthlyCosts > 0 ? cash / monthlyCosts : null, funded: cash >= target };
 }
 
@@ -224,9 +308,11 @@ export function nextDollar(data, { start = nowYM() } = {}) {
   const ret = +plan.assumedReturn || 6;
   const steps = [];
   steps.push({
-    key: 'emergency', title: `Emergency fund: ${ef.months} months of costs`,
-    detail: ef.monthlyCosts ? `${money(ef.cash)} of ${money(ef.target)} (${ef.months} × ${money(ef.monthlyCosts)}). Keep it in savings so a surprise doesn’t become new debt.` : 'Add your monthly costs to size this.',
-    amount: ef.gap, done: ef.funded && ef.monthlyCosts > 0,
+    key: 'emergency', title: ef.mode === 'starter' ? `Starter emergency fund: ${money(ef.target)} while in school` : `Emergency fund: ${ef.months} months of costs`,
+    detail: ef.funded && stability(data, start).normal.lowSaved.slack < -0.5 ? `Covered today (${money(ef.cash)} of ${money(ef.target)}), but costs ahead pull it under in ${ymLabel(stability(data, start).normal.lowSaved.m)}. Rebuild it before paying extra.`
+      : ef.mode === 'starter' ? `${money(ef.cash)} of ${money(ef.target)}. After graduation it grows to ${ef.months} months of costs. Keep it in savings so a surprise doesn’t become new debt.`
+      : ef.monthlyCosts ? `${money(ef.cash)} of ${money(ef.target)} (${ef.months} × ${money(ef.monthlyCosts)}). Keep it in savings so a surprise doesn’t become new debt.` : 'Add your monthly costs to size this.',
+    amount: ef.gap, done: ef.funded && (ef.mode === 'starter' || ef.monthlyCosts > 0) && stability(data, start).normal.lowSaved.slack >= -0.5,
   });
   const hotDebt = accounts.filter(a => a.kind === 'debt' && +a.balance > 0 && +a.rate >= 8).sort((a, b) => +b.rate - +a.rate);
   for (const a of hotDebt) steps.push({ key: `debt-${a.id}`, title: `Pay off ${a.name} (${pctTxt(a.rate)})`, detail: `High-rate debt costs more than investing is likely to earn. ${money(+a.balance)} left.`, amount: +a.balance, done: false });

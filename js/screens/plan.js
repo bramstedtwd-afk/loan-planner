@@ -1,6 +1,6 @@
 // Plan: the best route to debt-free given your income, costs and cash, why it wins, and what would change it.
 import { ym, ymLabel, MON, STRATEGIES, simulate, simulateAll, interestMoves, applyMove, extraCurve, yearlySummary, migratePlan, cashFlow } from '../engine.js';
-import { recommendRoute, effectivePlan, cushion } from '../wealth.js';
+import { recommendRoute, effectivePlan, cushion, monthAction } from '../wealth.js';
 import { money, dur, esc, pct } from '../format.js';
 import { stackedBalance, paymentBars, raceLines, extraCurveChart, legend } from '../charts.js';
 import { formSheet } from '../ui/form-sheet.js';
@@ -21,16 +21,23 @@ export function renderPlan(view, ctx) {
   const onRoute = Math.abs(r.totalInterest - best.totalInterest) < 1 && r.payoffM === best.payoffM;
   const grad = ym(plan.gradMonth);
   const cf = cashFlow(plan, start);
-  const focus = loans.find(l => l.id === rec.focusLoanId);
-  const nextUp = rec.order.filter(o => o.id !== rec.focusLoanId)[0];
+  // the loan extra goes to first: from this month's payment, or (when nothing extra goes in yet) where the strategy would send it
+  const focus = loans.find(l => l.id === (rec.focusLoanId || monthAction({ ...data, plan: rec.plan }, start).focusLoanId));
+  const nextUp = rec.order.filter(o => o.id !== focus?.id)[0];
   const ef = rec.emergency, hasCash = (data.accounts || []).some(a => a.kind === 'bank');
   const cu = cushion(data, start), setAside = cu.upcoming.map(p => `${esc(p.label)} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`).join(', ');
 
   const steps = [
     focus ? { t: `${esc(focus.name)} first`, s: `${pct(focus.rate)}${+focus.rate >= Math.max(...loans.map(l => +l.rate)) ? ', your highest rate' : ''}. Extra money goes here until it’s gone${nextUp ? `, then to ${esc(nextUp.name)}` : ''}.` } : null,
-    { t: `Send ${money(rec.monthly)} a month`, s: cf.inc.length ? `Everything left after costs: ${money(cf.income)} in − ${money(cf.costs)} costs.` : 'Add your income and costs on the Wealth tab to size this.' },
-    rec.lumpNow > 0 ? { t: `Put ${money(rec.lumpNow)} of savings in now`, s: `${plan.useSpareCash ? 'Part of your plan this month. When you pay it, log it and take it out of your bank balance. ' : ''}You keep ${money(ef.target)} (${ef.months} months of costs) as your emergency fund${setAside ? `, plus what’s planned: ${setAside}` : ''}.` }
-      : hasCash && cu.heldBack >= 100 ? { t: 'Keep your savings for now', s: `You have ${money(cu.heldBack)} above your ${money(ef.target)} emergency fund, and it’s spoken for${setAside ? `: ${setAside}` : ' by months where costs run past income'}.` }
+    hasCash ? (() => {
+      // cushion first: of what's left after costs over the next 12 months, how much stays in savings and how much goes to loans
+      const yr = cu.stability.normal.months.slice(0, 12), held = yr.reduce((s, x) => s + Math.max(0, x.avail - x.send), 0), sent = yr.reduce((s, x) => s + x.send, 0);
+      return { t: held > 1 ? 'Cushion first, then loans' : `Send everything left after costs`, s: held > 1
+        ? `Over the next 12 months, ${money(held)} of what’s left after costs stays in savings to keep your ${money(ef.target)} cushion${setAside ? ` and cover ${setAside}` : ''}; ${money(sent)} goes to loans. Extra goes in only when the cushion is safe.`
+        : `${money(sent)} over the next 12 months, with your ${money(ef.target)} cushion safe the whole way.` };
+    })() : { t: `Send ${money(rec.monthly)} a month`, s: cf.inc.length ? `Everything left after costs: ${money(cf.income)} in − ${money(cf.costs)} costs.` : 'Add your income and costs on the Wealth tab to size this.' },
+    rec.lumpNow > 0 ? { t: `${plan.useSpareCash ? 'Put' : 'You could put'} ${money(rec.lumpNow)} of savings in now`, s: `${plan.useSpareCash ? 'Part of your plan this month. ' : ''}Even in a bad stretch (income −20%, costs +15%) you keep your ${money(ef.target)} cushion${setAside ? ` and cover ${setAside}` : ''}.` }
+      : hasCash && cu.heldBack >= 100 ? { t: 'Keep your savings for now', s: `You have ${money(cu.heldBack)} above your ${money(ef.target)} cushion, and it’s spoken for${setAside ? `: ${setAside}` : ' by months where costs could run past income'}.` }
       : hasCash ? { t: 'Keep your savings where they are', s: ef.target ? `Your ${money(ef.cash)} in cash is ${ef.funded ? 'at' : 'under'} your ${money(ef.target)} emergency fund${ef.funded ? ', with nothing extra to spare yet' : ''}.` : 'Add monthly costs to size your emergency fund.' }
       : { t: 'Add your bank balance', s: 'Cash above your emergency fund could go in now. <a href="#accounts">Add it on the Wealth tab</a>.', html: true },
   ].filter(Boolean);

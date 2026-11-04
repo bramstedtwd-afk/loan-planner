@@ -80,14 +80,20 @@ export function renderWealth(view, ctx, sub) {
     <div class="board">
       <div class="col">
         <section class="card glass rise">
-          <div class="card-h"><h2>Emergency fund</h2><span class="badge ${ef.funded && ef.monthlyCosts ? '' : 'warn'}">${ef.funded && ef.monthlyCosts ? 'Covered' : `${money(ef.gap)} to go`}</span></div>
+          <div class="card-h"><h2>Emergency fund</h2>${(() => {
+            const low = cu.stability.normal.lowSaved, okNow = ef.funded && (ef.mode === 'starter' || ef.monthlyCosts);
+            if (!okNow) return `<span class="badge warn">${money(ef.gap)} to go</span>`;
+            if (cu.level === 'tight') return `<span class="badge crit">Short in ${ymLabel(low.m)}</span>`;
+            if (cu.level === 'watch') return '<span class="badge warn">Holds, but thin</span>';
+            return '<span class="badge good">Covered</span>';
+          })()}</div>
           <div class="meter"><i style="width:${(efPct * 100).toFixed(1)}%"></i></div>
           <div class="meter-l"><span><b class="num">${money(ef.cash)}</b> cash</span><span>goal <b class="num">${money(ef.target)}</b></span></div>
-          <p class="muted small" style="margin:10px 0 0">${ef.monthlyCosts ? `${ef.months} months × ${money(ef.monthlyCosts)} of costs. ${ef.runwayMonths != null ? `Your cash covers about <b>${ef.runwayMonths.toFixed(1)} months</b> of costs.` : ''}${cu.heldBack >= 100 ? ` <b>${money(cu.heldBack)}</b> above the goal is kept for ${cu.upcoming.length ? cu.upcoming.map(p => `${esc(p.label)} (${ymLabel(ym(p.month))})`).join(', ') : 'months where costs run past income'}.` : ''}${cu.amount >= 100 ? ` <b>${money(cu.amount)}</b> is safe to put toward loans${plan.useSpareCash ? ' and goes in this month as part of your plan.' : '; see the Plan tab.'}` : ''}` : 'Add your monthly costs in Cash flow to size this.'}</p>
+          <p class="muted small" style="margin:10px 0 0">${ef.mode === 'starter' || ef.monthlyCosts ? `${ef.mode === 'starter' ? `A ${money(ef.target)} starter fund while you’re in school; after graduation it grows to ${ef.months} months of costs.` : `${ef.months} months × ${money(ef.monthlyCosts)} of costs.`} ${ef.runwayMonths != null ? `Your cash covers about <b>${ef.runwayMonths.toFixed(1)} months</b> of costs.` : ''}${cu.heldBack >= 100 ? ` <b>${money(cu.heldBack)}</b> above the goal is kept for ${cu.upcoming.length ? cu.upcoming.map(p => `${esc(p.label)} (${ymLabel(ym(p.month))})`).join(', ') : 'months where costs run past income'}.` : ''}${cu.amount >= 100 ? ` <b>${money(cu.amount)}</b> is safe to put toward loans${plan.useSpareCash ? ' and goes in this month as part of your plan.' : '; see the Plan tab.'}` : ''}` : 'Add your monthly costs in Cash flow to size this.'}</p>
         </section>
         <section class="card glass rise">
           <div class="card-h"><h2>Assumptions</h2><button class="btn soft" type="button" data-assume style="height:34px;font-size:13px">Edit</button></div>
-          <div class="kv"><span>Emergency fund</span><b>${plan.emergencyMonths} months of costs</b></div>
+          <div class="kv"><span>Emergency fund</span><b>${plan.gradMonth ? `${money(+plan.emergencyStarter || 1000)} in school, then ` : ''}${plan.emergencyMonths} months of costs</b></div>
           <div class="kv"><span>Assumed investing return</span><b>${pct(plan.assumedReturn)} a year</b></div>
           <div class="kv"><span>Employer retirement match</span><b>${plan.employerMatch?.percent ? `${pct(plan.employerMatch.percent)} of pay` : 'Not set yet'}</b></div>
         </section>
@@ -105,15 +111,16 @@ export function renderWealth(view, ctx, sub) {
   wireRh();
   view.querySelector('[data-assume]').addEventListener('click', () => formSheet({
     title: 'Assumptions',
-    intro: 'These shape the emergency-fund goal and the next-dollar order.',
+    intro: 'These shape the cushion every recommendation protects, and the next-dollar order.',
     fields: [
-      { name: 'emergencyMonths', label: 'Emergency fund', type: 'segmented', value: String(plan.emergencyMonths), options: [['1', '1 month'], ['3', '3 months'], ['6', '6 months']] },
+      { name: 'emergencyStarter', label: 'Starter fund while in school', hint: 'until graduation', type: 'number', value: +plan.emergencyStarter || 1000, prefix: '$', min: 0, step: 50, required: true },
+      { name: 'emergencyMonths', label: 'After graduation', type: 'segmented', value: String(plan.emergencyMonths), options: [['1', '1 month'], ['3', '3 months'], ['6', '6 months']] },
       { name: 'assumedReturn', label: 'Assumed investing return', hint: 'per year, before inflation', type: 'number', value: plan.assumedReturn, suffix: '%', min: 0, max: 15, step: 0.5, required: true, half: true },
       { name: 'match', label: 'Employer match', hint: 'blank = none / not yet', type: 'number', value: plan.employerMatch?.percent || '', suffix: '% of pay', min: 0, max: 20, step: 0.5, half: true },
     ],
     submitLabel: 'Save',
-    onSubmit: v => save({ ...data, plan: { ...plan, emergencyMonths: +v.emergencyMonths, assumedReturn: +v.assumedReturn, employerMatch: +v.match > 0 ? { percent: +v.match } : null } },
-      `Assumptions: ${v.emergencyMonths}-month emergency fund, ${v.assumedReturn}% return${+v.match > 0 ? `, ${v.match}% match` : ''}`, 'Assumptions saved'),
+    onSubmit: v => save({ ...data, plan: { ...plan, emergencyStarter: +v.emergencyStarter, emergencyMonths: +v.emergencyMonths, assumedReturn: +v.assumedReturn, employerMatch: +v.match > 0 ? { percent: +v.match } : null } },
+      `Assumptions: ${money(+v.emergencyStarter)} starter, then ${v.emergencyMonths}-month emergency fund, ${v.assumedReturn}% return${+v.match > 0 ? `, ${v.match}% match` : ''}`, 'Assumptions saved'),
   }));
   return {};
 }
