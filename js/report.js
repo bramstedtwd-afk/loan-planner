@@ -2,6 +2,7 @@
 // Pure function (no I/O) so it runs the same in tests, in the browser and in the monthly GitHub Action.
 import { ym, ymStr, ymLabel, nowYM, migratePlan, simulate, interestMoves, cashFlow, owedNow, STRATEGIES } from './engine.js';
 import { effectivePlan } from './wealth.js';
+import { checkinDue, lastSunday } from './tracker.js';
 
 const money = (n, cents = false) => (n < -0.004 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
 const owedOf = (l, m) => owedNow(l, m);
@@ -97,6 +98,7 @@ export function reminders(data, { now = new Date(), hasHistory = false } = {}) {
   }
   for (const l of loans.filter(l => ym(l.disburseMonth) != null && ym(l.disburseMonth) <= start)) out.push({ key: `arrived-${l.id}`,
     text: `**${l.name}** was planned to arrive in ${monthName(ym(l.disburseMonth))}. Confirm the amount you actually got on the Loans tab.` });
+  if (checkinDue(data, now)) out.unshift({ key: `checkin-${lastSunday(now)}`, text: '**Sunday check-in:** confirm your bank balance in Wealth → Spending → Update balances, so the estimate and your spending stay honest.' });
   const grad = ym(plan.gradMonth);
   if (grad != null && grad >= start && grad - start <= 1) out.push({ key: 'grad', text: `Graduation is ${grad === start ? 'this month' : 'next month'}. Your grace period starts; review your income and costs in the app.` });
   const short = r.rows.slice(0, 3).filter(x => cashFlow(plan, x.m).inc.length && x.budget + 0.01 < x.minsDue).length;

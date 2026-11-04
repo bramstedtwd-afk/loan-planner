@@ -7,7 +7,7 @@ import { header, subnav } from '../ui/layout.js';
 import { makeEditors } from '../ui/editors.js';
 import { formSheet } from '../ui/form-sheet.js';
 
-export const WEALTH_TABS = [['wealth', 'Overview'], ['accounts', 'Accounts'], ['cashflow', 'Cash flow']];
+export const WEALTH_TABS = [['wealth', 'Overview'], ['spending', 'Spending'], ['accounts', 'Accounts'], ['cashflow', 'Cash flow']];
 const GROUP_ORDER = ['bank', 'brokerage', 'retirement', 'debt'];
 const daysOld = d => d ? Math.floor((Date.now() - new Date(d + 'T12:00')) / 864e5) : null;
 

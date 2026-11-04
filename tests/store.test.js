@@ -172,3 +172,14 @@ test('planned costs and future loans survive a save and reload', () => {
   eq(JSON.stringify(back.plan.planned), JSON.stringify(d.plan.planned));
   eq(back.loans.find(l => l.id === 'b').disburseMonth, '2027-01'); eq(back.loans.find(l => l.id === 'a').disburseMonth, '');
 });
+
+test('logged money and check-ins survive a save and reload', () => {
+  const d = { ...sample(), transactions: [{ id: 't1', date: '2026-11-02', amount: 12.5, dir: 'out', category: 'Food', note: 'lunch', kind: 'logged', createdAt: '2026-11-02T18:00:00Z' }],
+    checkins: [{ date: '2026-11-08', real: 2940, estimated: 3090, unlogged: -150, takenAt: '2026-11-08T16:00:00Z' }] };
+  d.plan.categories = { out: ['Rent', 'Food'], in: ['Paycheck'] };
+  const db = openDb(SQL()); writeAll(db, d);
+  const back = readAll(openDb(SQL(), exportBytes(db)));
+  eq(JSON.stringify(back.transactions), JSON.stringify(d.transactions));
+  eq(JSON.stringify(back.checkins), JSON.stringify(d.checkins));
+  eq(JSON.stringify(back.plan.categories), JSON.stringify(d.plan.categories));
+});

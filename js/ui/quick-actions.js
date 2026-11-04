@@ -2,7 +2,8 @@
 import { openSheet } from './sheet.js';
 
 const ACTIONS = [
-  { key: 'log', icon: 'i-send', title: 'Log a payment', sub: 'Record what you sent a servicer' },
+  { key: 'money', icon: 'i-money', title: 'Log money in/out', sub: 'Groceries, a paycheck, a Venmo, anything real' },
+  { key: 'log', icon: 'i-send', title: 'Log a loan payment', sub: 'Record what you sent a servicer' },
   { key: 'balance', icon: 'i-money', title: 'Update a balance', sub: 'Bank, investing, retirement or a debt' },
   { key: 'income', icon: 'i-plan', title: 'Add income', sub: 'A job, internship or side gig' },
   { key: 'cost', icon: 'i-loans', title: 'Add monthly costs', sub: 'Rent, food, phone and the rest' },

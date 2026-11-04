@@ -69,3 +69,10 @@ test('reminders flag a planned cost due soon and a planned loan that should have
   ok(keys.includes('planned-tu') && !keys.includes('planned-far'), keys.join());
   ok(keys.includes('arrived-n'), keys.join());
 });
+
+test('a Sunday check-in reminder shows once the bank balance is older than the last Sunday', () => {
+  const d = { ...data(), accounts: [{ id: 'c', name: 'Checking', kind: 'bank', balance: 900, updatedAt: '2026-10-20' }] };
+  const t = reminders(d, { now: NOW }).find(x => x.key.startsWith('checkin-'));
+  ok(t && t.key === 'checkin-2026-11-01', t?.key);
+  ok(!reminders({ ...d, accounts: [{ ...d.accounts[0], updatedAt: '2026-11-01' }] }, { now: NOW }).some(x => x.key.startsWith('checkin-')));
+});

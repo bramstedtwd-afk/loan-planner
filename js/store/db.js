@@ -39,12 +39,18 @@ const MIGRATIONS = [
      id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', amount REAL NOT NULL DEFAULT 0, month TEXT NOT NULL DEFAULT '',
      paid_on TEXT NOT NULL DEFAULT '', sort INTEGER NOT NULL DEFAULT 0);
    ALTER TABLE loans ADD COLUMN disburse_month TEXT NOT NULL DEFAULT '';`,
+  // v4: real money in and out (logged by hand, or "unlogged" differences found at a balance check-in), and the check-ins themselves.
+  `CREATE TABLE transactions (
+     id TEXT PRIMARY KEY, date TEXT NOT NULL, amount REAL NOT NULL, dir TEXT NOT NULL, category TEXT NOT NULL DEFAULT '',
+     note TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'logged', created_at TEXT NOT NULL DEFAULT '');
+   CREATE TABLE checkins (
+     date TEXT PRIMARY KEY, real REAL NOT NULL, estimated REAL NOT NULL, unlogged REAL NOT NULL DEFAULT 0, taken_at TEXT NOT NULL DEFAULT '');`,
 ];
 export const DB_VERSION = MIGRATIONS.length;
 export const MIGRATIONS_FOR_TESTS = MIGRATIONS;
 
 // Plan fields kept as JSON in `settings`; list fields live in their own tables.
-const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder', 'emergencyMonths', 'assumedReturn', 'employerMatch', 'strategyOverride', 'dismissed', 'useSpareCash'];
+const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder', 'emergencyMonths', 'assumedReturn', 'employerMatch', 'strategyOverride', 'dismissed', 'useSpareCash', 'categories'];
 
 const rowsOf = (db, sql, params) => {
   const st = db.prepare(sql); if (params) st.bind(params);
@@ -103,7 +109,11 @@ export function readAll(db) {
     id: r.id, name: r.name, kind: r.kind, institution: r.institution, balance: r.balance, rate: r.rate, minPayment: r.min_payment,
     source: r.source, updatedAt: r.updated_at, order: r.sort, notes: r.notes, history: history[r.id] || [],
   }));
-  return { loans, payments, scenarios, plan, accounts };
+  const transactions = rowsOf(db, 'SELECT * FROM transactions ORDER BY date, created_at').map(r => ({
+    id: r.id, date: r.date, amount: r.amount, dir: r.dir, category: r.category, note: r.note, kind: r.kind, createdAt: r.created_at,
+  }));
+  const checkins = rowsOf(db, 'SELECT * FROM checkins ORDER BY date').map(r => ({ date: r.date, real: r.real, estimated: r.estimated, unlogged: r.unlogged, takenAt: r.taken_at }));
+  return { loans, payments, scenarios, plan, accounts, transactions, checkins };
 }
 
 const num = v => (v === '' || v == null || Number.isNaN(+v)) ? 0 : +v;
@@ -114,7 +124,11 @@ export function writeAll(db, data) {
   const plan = migratePlan(data.plan || {});
   db.exec('BEGIN');
   try {
-    for (const t of ['loans', 'payments', 'incomes', 'expenses', 'lumps', 'settings', 'scenarios', 'accounts', 'account_history', 'planned_costs']) db.exec(`DELETE FROM ${t}`);
+    for (const t of ['loans', 'payments', 'incomes', 'expenses', 'lumps', 'settings', 'scenarios', 'accounts', 'account_history', 'planned_costs', 'transactions', 'checkins']) db.exec(`DELETE FROM ${t}`);
+    for (const t of data.transactions || []) db.run('INSERT INTO transactions (id, date, amount, dir, category, note, kind, created_at) VALUES (?,?,?,?,?,?,?,?)',
+      [str(t.id), str(t.date), num(t.amount), t.dir === 'in' ? 'in' : 'out', str(t.category), str(t.note), str(t.kind || 'logged'), str(t.createdAt)]);
+    for (const c of data.checkins || []) db.run('INSERT OR REPLACE INTO checkins (date, real, estimated, unlogged, taken_at) VALUES (?,?,?,?,?)',
+      [str(c.date), num(c.real), num(c.estimated), num(c.unlogged), str(c.takenAt)]);
     (plan.planned || []).forEach((p, i) => db.run('INSERT INTO planned_costs (id, label, amount, month, paid_on, sort) VALUES (?,?,?,?,?,?)',
       [str(p.id || `c${i}`), str(p.label), num(p.amount), str(p.month), str(p.paidOn), i]));
     (data.accounts || []).forEach((a, i) => {

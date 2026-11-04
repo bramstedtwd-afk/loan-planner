@@ -13,12 +13,12 @@ test('older links redirect to their new homes', () => {
 
 test('sub-views belong to their tab; Settings to no tab', () => {
   eq(resolveRoute('#activity').tab, 'loans');
-  eq(resolveRoute('#accounts').tab, 'wealth'); eq(resolveRoute('#cashflow').tab, 'wealth');
+  eq(resolveRoute('#accounts').tab, 'wealth'); eq(resolveRoute('#spending').tab, 'wealth'); eq(resolveRoute('#checkin').tab, 'wealth'); eq(resolveRoute('#cashflow').tab, 'wealth');
   eq(resolveRoute('#settings').tab, null);
 });
 
 test('empty or unknown links open Today', () => {
   eq(resolveRoute('').key, 'today'); eq(resolveRoute('#').key, 'today');
   eq(resolveRoute('#nope').key, 'today'); eq(resolveRoute(undefined).key, 'today');
-  eq(Object.keys(ROUTES).length, 8);
+  eq(Object.keys(ROUTES).length, 10);
 });

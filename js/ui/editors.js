@@ -3,6 +3,7 @@ import { ym, ymStr, ymLabel, toMonthly } from '../engine.js';
 import { money, todayISO } from '../format.js';
 import { formSheet } from './form-sheet.js';
 import { ACCOUNT_KINDS } from '../wealth.js';
+import { applyCheckin } from '../tracker.js';
 
 export const INC_KINDS = { part: 'Part-time', intern: 'Internship', full: 'Full-time', other: 'Other' };
 
@@ -110,22 +111,19 @@ export function makeEditors({ data, save, start }) {
       onDelete: isNew ? null : () => setList('planned', planned.filter((_, k) => k !== i), `Removed planned cost: ${s.label}`, `${s.label} removed`),
     });
   };
-  // Paying it: record the date and take it out of the bank account it came from, so the cushion stays right.
+  // Paying it: record the date. It shows in Spending and lowers the estimated balance; the real one waits for the check-in.
   const markPlannedPaid = i => {
-    const s = planned[i], banks = accounts.filter(a => a.kind === 'bank');
+    const s = planned[i];
     formSheet({
       title: `Paid ${s.label}`,
       fields: [
         { name: 'amount', label: 'Amount paid', type: 'number', value: s.amount, prefix: '$', min: 0, step: 0.01, required: true, half: true },
         { name: 'date', label: 'Paid on', type: 'date', value: todayISO(), required: true, half: true },
-        ...(banks.length ? [{ name: 'from', label: 'Paid from', hint: 'lowers that balance', type: 'select', value: banks.length === 1 ? banks[0].id : '',
-          options: [['', 'Don’t change any balance'], ...banks.map(a => [a.id, `${a.name} · ${money(+a.balance || 0)}`])] }] : []),
       ],
       submitLabel: 'Mark paid',
       onSubmit: v => {
         const item = { ...s, amount: +v.amount, paidOn: v.date };
-        const nextAccounts = v.from ? accounts.map(a => a.id === v.from ? withHistory(a, Math.round(((+a.balance || 0) - +v.amount) * 100) / 100, v.date) : a) : accounts;
-        save({ ...data, accounts: nextAccounts, plan: { ...plan, planned: planned.map((x, k) => k === i ? item : x) } },
+        save({ ...data, plan: { ...plan, planned: planned.map((x, k) => k === i ? item : x) } },
           `Paid ${item.label}: ${money(item.amount, true)} (${v.date})`, `${item.label} marked paid`);
       },
     });
@@ -175,6 +173,11 @@ export function makeEditors({ data, save, start }) {
       onInput: (v, sheet) => { const d = (+v.balance || 0) - (+a.balance || 0); sheet.querySelector('[data-delta]').innerHTML = Math.abs(d) >= 0.01 ? `<b>${d > 0 ? '+' : '−'}${money(Math.abs(d), true)}</b> since last update` : ''; },
       submitLabel: 'Update',
       onSubmit: v => {
+        // A bank balance is a check-in: any gap from the estimate is recorded as Unlogged, the same as on Sunday.
+        if (a.kind === 'bank') {
+          const r = applyCheckin(data, { [a.id]: +v.balance }, v.date);
+          return save(r.data, `Balance ${a.name}: ${money(+v.balance, true)} (${v.date})${Math.abs(r.gap) >= 0.5 ? `, unlogged ${r.gap < 0 ? '−' : '+'}${money(Math.abs(r.gap), true)}` : ''}`, `${a.name} updated`);
+        }
         const acct = withHistory(a, +v.balance, v.date);
         setAccounts(accounts.map((x, k) => k === i ? acct : x), `Balance ${a.name}: ${money(+v.balance, true)} (${v.date})`, `${a.name} updated`);
       },

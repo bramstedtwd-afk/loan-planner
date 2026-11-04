@@ -12,6 +12,8 @@ import { renderPlan } from './screens/plan.js';
 import { renderMoney } from './screens/money.js';
 import { renderLoans } from './screens/loans.js';
 import { renderWealth } from './screens/wealth.js';
+import { renderSpending } from './screens/spending.js';
+import { openLogMoney } from './ui/log-money.js';
 import { openLogPayment } from './ui/log-payment.js';
 import { openQuickActions } from './ui/quick-actions.js';
 import { makeEditors } from './ui/editors.js';
@@ -97,7 +99,8 @@ const cache = {
 function normalize(d) {
   const loans = [...(d.loans || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(b.name));
   const accounts = [...(d.accounts || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(b.name));
-  return { loans, payments: d.payments || [], scenarios: d.scenarios || [], plan: migratePlan(d.plan || {}), accounts };
+  return { loans, payments: d.payments || [], scenarios: d.scenarios || [], plan: migratePlan(d.plan || {}), accounts,
+    transactions: d.transactions || [], checkins: d.checkins || [] };
 }
 const reloadData = () => { state.data = normalize(state.sync.data()); };
 
@@ -185,6 +188,7 @@ function download(name, bytes, type) {
 
 /* ---------- screens ---------- */
 const rhCtx = () => state.config.token ? { ...robinhood, onRefresh: refreshRobinhood } : null;
+const spendCtx = () => ({ data: state.data, start, save, onMonth: m => { state.spendMonth = m; render(); } });
 const SCREENS = {
   today: { render: v => {
     if (!state.data.loans.length) return emptyState(v, 'Today');
@@ -212,6 +216,9 @@ const SCREENS = {
   wealth: { render: v => renderWealth(v, { data: state.data, start, save, robinhood: rhCtx() }, 'wealth') },
   accounts: { render: v => renderWealth(v, { data: state.data, start, save, robinhood: rhCtx() }, 'accounts') },
   cashflow: { render: v => renderMoney(v, { data: state.data, start, save }) },
+  spending: { render: v => renderSpending(v, spendCtx(), { month: state.spendMonth }) },
+  // The Sunday reminder links here: show Spending and open the check-in once (the address becomes #spending so it doesn't reopen).
+  checkin: { render: v => { history.replaceState(null, '', '#spending'); return renderSpending(v, spendCtx(), { month: state.spendMonth, openCheck: true }); } },
   loans: { render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save, onLogPayment: logPayment }); } },
 };
 
@@ -243,6 +250,7 @@ addEventListener('online', async () => { await state.sync?.retry(); reloadData()
 document.querySelector('[data-quick]').addEventListener('click', () => {
   const ed = makeEditors({ data: state.data, save, start });
   openQuickActions({
+    money: () => openLogMoney({ data: state.data, save }),
     log: state.data.loans.length ? logPayment : null,
     balance: () => ed.pickAccountToUpdate(),
     income: () => ed.editIncome(null), cost: () => ed.editCost(null), planned: () => ed.editPlanned(null), lump: () => ed.editLump(null),

@@ -8,6 +8,7 @@ await import('./store.test.js');
 await import('./report.test.js');
 await import('./routes.test.js');
 await import('./wealth.test.js');
+await import('./tracker.test.js');
 
 const results = await run();
 for (const r of results) console.log(`${r.pass ? 'ok  ' : 'FAIL'} ${r.name}${r.pass ? '' : `\n     ${r.error}`}`);
