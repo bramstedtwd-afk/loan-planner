@@ -24,6 +24,8 @@ export function renderPlan(view, ctx) {
   // the loan extra goes to first: from this month's payment, or (when nothing extra goes in yet) where the strategy would send it
   const focus = loans.find(l => l.id === (rec.focusLoanId || monthAction({ ...data, plan: rec.plan }, start).focusLoanId));
   const nextUp = rec.order.filter(o => o.id !== focus?.id)[0];
+  // what-if moves that put in new money: flag them when the cushion can't spare it (Today never suggests these)
+  const needsCash = m => (m.apply?.lump && m.apply.lump > cushion(data, start).amount) || !!m.apply?.extra;
   const ef = rec.emergency, hasCash = (data.accounts || []).some(a => a.kind === 'bank');
   const cu = cushion(data, start), setAside = cu.upcoming.map(p => `${esc(p.label)} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`).join(', ');
 
@@ -85,7 +87,7 @@ export function renderPlan(view, ctx) {
     <section class="card glass rise moves">
       <div class="card-h"><h2>Ways to cut more interest</h2><span class="muted small">On top of your current settings</span></div>
       <div class="rows">${moves.length ? moves.map((m, i) => `
-        <div class="row"><span class="rank">${i + 1}</span><div class="name"><b>${esc(m.title)}</b><small>${esc(m.detail)}</small></div>
+        <div class="row"><span class="rank">${i + 1}</span><div class="name"><b>${esc(m.title)}${needsCash(m) ? '<span class="tag warn-tag">Needs cash you don’t have spare yet</span>' : ''}</b><small>${esc(m.detail)}</small></div>
           <div class="right"><span class="save num">${money(m.saved)}</span><small class="muted">${m.result.done ? ymLabel(m.result.payoffM) : 'Not yet'}${m.sooner > 0 ? ` · ${dur(m.sooner)} sooner` : ''}</small><button class="btn soft" type="button" data-move="${i}">Apply</button></div></div>`).join('')
         : '<p class="muted" style="margin:0">Your plan already covers every move this app can test.</p>'}</div>
     </section>

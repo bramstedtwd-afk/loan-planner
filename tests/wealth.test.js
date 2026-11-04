@@ -1,6 +1,6 @@
 // Wealth math tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood, cushion, monthAction, stability, cushionAt, habits, outlook } from '../js/wealth.js';
+import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood, cushion, monthAction, stability, cushionAt, habits, outlook, netWorthSeries } from '../js/wealth.js';
 import { defaultPlan, ym, simulate } from '../js/engine.js';
 
 const START = ym('2026-10');
@@ -199,4 +199,16 @@ test('real habits scale the projection once a full month is tracked', () => {
   eq(h.months, 1); near(h.incomeRatio, 0.9, 1e-9); near(h.costsRatio, 1.25, 1e-9);
   near(outlook(d, START).months[0].costs, 1500, 1e-9);
   eq(habits({ ...d, checkins: [], transactions: [tx('2026-09-15', 10, 'out')] }, START).months, 0, 'September only partly tracked;');
+});
+
+test('net worth series: real month-ends from history, then a projection where owed falls to zero', () => {
+  const a = { ...acct('c', 'bank', 5000), history: [{ date: '2026-08-15', balance: 4000 }, { date: '2026-09-20', balance: 4600 }, { date: '2026-10-01', balance: 5000 }] };
+  const d = { loans: loans(), plan: plan(), accounts: [a, acct('rh', 'brokerage', 1000)], payments: [] };
+  const s = netWorthSeries(d, START);
+  eq(s.past.map(p => p.m).join(), [ym('2026-08'), ym('2026-09'), START].join());
+  eq(s.past[0].assets, 4000); eq(s.past[1].assets, 4600);
+  eq(s.past[2].owed, 14900); near(s.past[2].net, 5000 + 1000 - 14900, 1e-6);
+  const last = s.future[s.future.length - 1];
+  eq(last.owed, 0); ok(last.net > s.past[2].net, 'net worth grows');
+  ok(s.future.some(p => p.owed < 14900 / 2), 'owed falls');
 });

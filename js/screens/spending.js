@@ -3,7 +3,8 @@ import { ym, ymStr, ymLabel, cashFlow } from '../engine.js';
 import { money, esc } from '../format.js';
 import { header, subnav } from '../ui/layout.js';
 import { WEALTH_TABS } from './wealth.js';
-import { balances, monthSummary, ledger, checkinDue, UNLOGGED } from '../tracker.js';
+import { balances, monthSummary, ledger, checkinDue, actualVsPlan, UNLOGGED } from '../tracker.js';
+import { actualPlanBars, legend } from '../charts.js';
 import { openLogMoney, openCheckin } from '../ui/log-money.js';
 import { formSheet } from '../ui/form-sheet.js';
 
@@ -17,6 +18,7 @@ export function renderSpending(view, ctx, { month: shown, openCheck = false } = 
   const firstMonth = ledger(data).reduce((x, e) => (e.date || '') < x ? e.date : x, ymStr(start)).slice(0, 7);
   const maxCat = Math.max(1, ...s.byCategory.map(c => c.amount));
   const days = [...new Set(s.entries.map(e => e.date))];
+  const trend = actualVsPlan(data, ymStr(start), k => cashFlow(data.plan, ym(k)), 6);
   const tagFor = e => e.source === 'payment' ? 'Loan' : e.source === 'planned' ? 'Planned' : e.kind === 'unlogged' ? 'Check-in' : '';
 
   view.innerHTML = `${header({ title: 'Wealth' })}${subnav(WEALTH_TABS, 'spending', 'Wealth views')}
@@ -44,6 +46,13 @@ export function renderSpending(view, ctx, { month: shown, openCheck = false } = 
       ${s.byCategory.length ? `<div class="cats">${s.byCategory.map(c => `<div class="cat"><span>${esc(c.category)}</span><div class="bar"><i style="width:${(c.amount / maxCat * 100).toFixed(1)}%;background:${c.category === UNLOGGED ? 'var(--warn)' : c.category === 'Loan payment' ? 'var(--accent)' : 'var(--s1)'}"></i></div><b class="num">${money(c.amount)}</b></div>`).join('')}</div>` : ''}
       <div class="add-row"><button class="btn primary" type="button" data-log="out">− Money out</button><button class="btn soft" type="button" data-log="in">+ Money in</button></div>
     </section>
+
+    ${trend.length ? `<section class="card glass rise" aria-label="Actual vs plan">
+      <div class="card-h"><h2>Actual vs plan</h2><span class="muted small">${trend.length < 2 ? 'Fills in as you log' : `Last ${trend.length} months`}</span></div>
+      <div class="legend">${legend([{ name: 'Spent', color: 'var(--s1)' }, { name: 'Came in', color: 'var(--good)' }, { name: 'Plan (outline / line)', color: 'var(--ink-3)' }])}</div>
+      <div class="chartbox" data-trend></div>
+      ${trend.some(d => d.partial) ? '<p class="muted small" style="margin:6px 0 0">* This month so far.</p>' : ''}
+    </section>` : ''}
 
     <section class="card glass rise" aria-label="Entries">
       <div class="card-h"><h2>Entries</h2><span class="muted small">${s.entries.length || 'None yet'}</span></div>
@@ -81,5 +90,6 @@ export function renderSpending(view, ctx, { month: shown, openCheck = false } = 
     });
   });
   if (openCheck && b.hasBank) setTimeout(() => openCheckin({ data, save }), 150);
-  return {};
+  const box = view.querySelector('[data-trend]');
+  return { redraw: box ? actualPlanBars(box, trend) : null };
 }

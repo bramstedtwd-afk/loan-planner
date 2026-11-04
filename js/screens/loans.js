@@ -16,7 +16,11 @@ function thisMonthCard(data, r, start, colorOf) {
   const paying = data.loans.filter(l => row.pay[l.id] > 0.005);
   const idle = data.loans.filter(l => (row.bal[l.id] ?? 0) > 0.005 && !(row.pay[l.id] > 0.005));
   const idleRepay = idle.map(l => ym(l.repayStart)).filter(m => m != null && m > start);
-  const how = cf.inc.length ? `${money(cf.income)} in − ${money(cf.costs + cf.oneTime)} costs${cf.share < 100 ? ` × ${cf.share}%` : ''}${extra ? `, plus ${money(extra)} extra` : ''}${row.lump ? `, plus ${money(row.lump)} one-time` : ''}` : extra ? `Your ${money(extra)} monthly extra` : 'Only the minimums are due';
+  // With a bank balance known the plan is cushion-first, so part of what's left can stay in savings; say so.
+  const cushionFirst = (data.accounts || []).some(a => a.kind === 'bank');
+  const kept = cushionFirst ? Math.max(0, Math.max(0, cf.left) - (row.paid - row.lump)) : 0;
+  const how = cf.inc.length ? `${money(cf.income)} in − ${money(cf.costs + cf.oneTime)} costs${cf.share < 100 ? ` × ${cf.share}%` : ''}${!cushionFirst && extra ? `, plus ${money(extra)} extra` : ''}${row.lump ? `, plus ${money(row.lump)} one-time` : ''}${kept > 0.5 ? `; ${money(kept)} stays in savings for your cushion` : ''}`
+    : !cushionFirst && extra ? `Your ${money(extra)} monthly extra` : 'Only the minimums are due';
   const monthName = new Date(Math.floor(start / 12), start % 12, 1).toLocaleDateString('en-US', { month: 'long' });
   const logged = (data.payments || []).filter(p => String(p.date).startsWith(ymStr(start))).reduce((s, p) => s + (+p.amount || 0), 0);
   const left = Math.max(0, row.paid - logged);

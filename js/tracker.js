@@ -59,6 +59,23 @@ export function applyCheckin(data, realById, date, { now = new Date() } = {}) {
   return { data: { ...data, accounts, transactions, checkins }, gap, real, estimated: before.estimated };
 }
 
+// Actual vs planned for the last `n` months up to `month` ("YYYY-MM"), starting no earlier than the first tracked month.
+// Spending here is what you logged (plus Unlogged); loan payments and planned costs are shown apart.
+export function actualVsPlan(data, month, planOf, n = 6) {
+  const first = [...ledger(data).map(e => e.date), ...(data.checkins || []).map(c => c.date)].filter(Boolean).sort()[0];
+  if (!first) return [];
+  const [y, mo] = month.split('-').map(Number), out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(y, mo - 1 - i, 1), key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    if (key < first.slice(0, 7)) continue;
+    const s = monthSummary(data, key), p = planOf(key);
+    const spent = r2(s.entries.filter(e => e.dir === 'out' && e.source === 'log').reduce((t, e) => t + e.amount, 0));
+    out.push({ month: key, in: s.in, spent, loans: r2(s.entries.filter(e => e.source === 'payment').reduce((t, e) => t + e.amount, 0)),
+      planned: r2(s.entries.filter(e => e.source === 'planned').reduce((t, e) => t + e.amount, 0)), planIn: r2(p.income), planSpent: r2(p.costs), partial: key === month });
+  }
+  return out;
+}
+
 // The most recent Sunday on or before `now`, as YYYY-MM-DD. A check-in is due when the real balance is older than that.
 export const lastSunday = (now = new Date()) => { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); return iso(d); };
 export const checkinDue = (data, now = new Date()) => { const b = balances(data); return b.hasBank && b.asOf < lastSunday(now); };

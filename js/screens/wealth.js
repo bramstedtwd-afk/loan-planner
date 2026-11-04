@@ -1,6 +1,7 @@
 // Wealth: what you have, what you owe, and where the next dollar should go.
 // Overview (net worth, emergency fund, next dollar) and Accounts (balances you keep up to date). Cash flow lives in money.js.
-import { netWorth, emergencyFund, nextDollar, cushion, ACCOUNT_KINDS } from '../wealth.js';
+import { netWorth, emergencyFund, nextDollar, cushion, netWorthSeries, ACCOUNT_KINDS } from '../wealth.js';
+import { netWorthChart, legend } from '../charts.js';
 import { ym, ymLabel } from '../engine.js';
 import { money, esc, ago, pct } from '../format.js';
 import { header, subnav } from '../ui/layout.js';
@@ -76,6 +77,12 @@ export function renderWealth(view, ctx, sub) {
       <div class="nw-key">${[...assetsParts, ...debtParts].map(([n, v, c]) => `<span><i style="background:${c}"></i>${n} ${money(v)}</span>`).join('')}</div>
     </section>
     ${rh ? `<section class="card glass rise">${rhStrip(rh)}</section>` : ''}
+    ${data.loans.length ? `<section class="card glass rise" aria-label="Net worth over time">
+      <div class="card-h"><h2>Net worth over time</h2><span class="muted small">Solid = real · dashed = projected</span></div>
+      <div class="legend">${legend([{ name: 'Net worth', color: 'var(--accent)' }, { name: 'Owed on loans', color: 'var(--s2)' }])}</div>
+      <div class="chartbox" data-networth></div>
+      <p class="muted small" style="margin:6px 0 0">Projection: cash follows your cushion-first plan, investments grow ${pct(plan.assumedReturn)} a year, loans follow your route.</p>
+    </section>` : ''}
     ${accounts.length ? '' : `<section class="card glass rise"><div class="card-h"><h2>Start with your bank balance</h2></div><p class="muted small" style="margin:0 0 12px">Your checking and savings decide your emergency fund and how much cash the Plan can put toward loans. Investing and retirement accounts count toward net worth.</p><div class="add-row"><button class="btn primary" type="button" data-add="bank">Add bank account</button><button class="btn soft" type="button" data-add="brokerage">Add investing</button><button class="btn soft" type="button" data-add="retirement">Add retirement</button></div></section>`}
     <div class="board">
       <div class="col">
@@ -122,5 +129,6 @@ export function renderWealth(view, ctx, sub) {
     onSubmit: v => save({ ...data, plan: { ...plan, emergencyStarter: +v.emergencyStarter, emergencyMonths: +v.emergencyMonths, assumedReturn: +v.assumedReturn, employerMatch: +v.match > 0 ? { percent: +v.match } : null } },
       `Assumptions: ${money(+v.emergencyStarter)} starter, then ${v.emergencyMonths}-month emergency fund, ${v.assumedReturn}% return${+v.match > 0 ? `, ${v.match}% match` : ''}`, 'Assumptions saved'),
   }));
-  return {};
+  const box = view.querySelector('[data-networth]');
+  return { redraw: box ? netWorthChart(box, netWorthSeries(data, start)) : null };
 }

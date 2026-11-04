@@ -333,6 +333,7 @@ button.row:hover .name b { color: var(--accent); }
 @keyframes spin { to { transform: rotate(360deg); } }
 .tag { display: inline-block; font-size: 11px; font-weight: 650; padding: 2px 7px; border-radius: 999px; background: var(--hairline); color: var(--ink-2); vertical-align: 1px; margin-left: 6px; }
 .tag.fed { background: var(--accent-soft); color: var(--accent); }
+.tag.warn-tag { background: var(--warn-soft); color: var(--warn); white-space: normal; }
 .tag.now { background: rgb(42 120 214 / 0.14); color: var(--s1); }
 
 /* stats grid used on Loans and Money */

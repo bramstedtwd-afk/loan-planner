@@ -1,6 +1,6 @@
 // Real money tracker tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { ledger, balances, monthSummary, applyCheckin, lastSunday, checkinDue, UNLOGGED } from '../js/tracker.js';
+import { ledger, balances, monthSummary, applyCheckin, lastSunday, checkinDue, actualVsPlan, UNLOGGED } from '../js/tracker.js';
 import { defaultPlan } from '../js/engine.js';
 
 const bank = (id, balance, updatedAt) => ({ id, name: id, kind: 'bank', balance, updatedAt, history: [{ date: updatedAt, balance }] });
@@ -58,4 +58,13 @@ test('a check-in is due once the real balance is older than the most recent Sund
   eq(checkinDue(base(), new Date('2026-11-04T12:00:00')), false);
   eq(checkinDue(base(), new Date('2026-11-08T12:00:00')), true);
   eq(checkinDue({ accounts: [] }, new Date('2026-11-08T12:00:00')), false, 'no bank account, nothing to check;');
+});
+
+test('actual vs plan starts at the first tracked month and keeps loan payments apart', () => {
+  const planOf = () => ({ income: 1000, costs: 700 });
+  const rows = actualVsPlan(base(), '2026-11', planOf, 6);
+  eq(rows.map(r => r.month).join(), '2026-10,2026-11', 'nothing before the first entry;');
+  const nov = rows[1];
+  eq(nov.spent, 80, 'food only;'); eq(nov.loans, 100); eq(nov.in, 250); eq(nov.planSpent, 700); eq(nov.partial, true);
+  eq(actualVsPlan({ accounts: [], plan: {} }, '2026-11', planOf).length, 0);
 });

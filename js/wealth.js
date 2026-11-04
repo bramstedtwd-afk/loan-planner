@@ -217,6 +217,37 @@ const money = n => (n < -0.004 ? '−$' : '$') + Math.abs(Math.round(n)).toLocal
 const owedOf = l => owedNow(l);
 const pctTxt = r => `${(+r).toFixed(2).replace(/\.?0+$/, '')}%`;
 
+// Net worth and total owed over time: real month-end points from account history (loan balances rebuilt from logged
+// principal), then a projection to payoff: cash from the cushion-first outlook, investments growing at the assumed
+// return, loans from the plan.
+export function netWorthSeries(data, start = nowYM()) {
+  const accounts = data.accounts || [], loans = data.loans || [], plan = data.plan || {};
+  const owedNowTotal = loans.reduce((s, l) => s + owedOf(l), 0), debt = accounts.filter(a => a.kind === 'debt').reduce((s, a) => s + (+a.balance || 0), 0);
+  const balAt = (a, date) => { const h = (a.history || []).filter(x => x.date <= date).pop(); return h ? h.balance : null; };
+  const first = accounts.flatMap(a => (a.history || []).map(h => h.date)).sort()[0];
+  const past = [];
+  if (first) for (let m = ym(first.slice(0, 7)); m < start; m++) {
+    const end = `${ymStr(m)}-31`, vals = accounts.map(a => ({ a, v: balAt(a, end) }));
+    if (vals.every(x => x.v == null)) continue;
+    const assets = vals.filter(x => x.a.kind !== 'debt').reduce((s, x) => s + (x.v || 0), 0);
+    const owed = owedNowTotal + (data.payments || []).filter(p => p.date > end).reduce((s, p) => s + (+p.principal || 0), 0);
+    past.push({ m, assets, owed, net: assets - owed - debt, real: true });
+  }
+  const st = stability(data, start), r = simulate(loans, effectivePlan(data, start), validStrategy(plan), { start });
+  const invest = accounts.filter(a => a.kind === 'brokerage' || a.kind === 'retirement').reduce((s, a) => s + (+a.balance || 0), 0);
+  const g = Math.pow(1 + (+plan.assumedReturn || 6) / 100, 1 / 12) - 1;
+  const cashNow = st.cash, end = Math.max(start + 12, (r.payoffM ?? start + 60) + 6);
+  const nowPt = { m: start, assets: cashNow + invest, owed: owedNowTotal, net: cashNow + invest - owedNowTotal - debt, real: true };
+  const future = [];
+  for (let m = start; m <= end; m++) {
+    const x = st.normal.months.find(y => y.m === m), row = r.rows.find(y => y.m === m);
+    const cash = x ? x.cash : future.length ? future[future.length - 1].cash : cashNow;
+    const inv = invest * Math.pow(1 + g, m - start + 1), owed = row ? row.total : r.done && m > (r.payoffM ?? m) ? 0 : owedNowTotal;
+    future.push({ m: m + 1, cash, assets: cash + inv, owed, net: cash + inv - owed - debt });
+  }
+  return { past: [...past, nowPt], future, payoffM: r.payoffM };
+}
+
 export function netWorth(accounts = [], loans = []) {
   const sum = k => accounts.filter(a => a.kind === k).reduce((s, a) => s + (+a.balance || 0), 0);
   const cash = sum('bank'), investments = sum('brokerage'), retirement = sum('retirement'), otherDebt = sum('debt');

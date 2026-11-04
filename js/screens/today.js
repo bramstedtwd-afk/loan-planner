@@ -4,6 +4,7 @@ import { recommendRoute, effectivePlan, monthAction } from '../wealth.js';
 import { reminders } from '../report.js';
 import { money, dur, esc } from '../format.js';
 import { header } from '../ui/layout.js';
+import { runwayChart, legend } from '../charts.js';
 
 const md = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 
@@ -79,6 +80,11 @@ export function renderToday(view, ctx) {
         ${act.kind !== 'no-bank' ? `<ul class="reasons">${reasons.map(([k, v]) => `<li><span>${k}</span><div>${v}</div></li>`).join('')}</ul>` : ''}
         <div class="actions" style="margin-top:14px">${act.action ? act.action.prefill ? `<button class="btn primary" type="button" data-prefill>${esc(act.action.label)}</button>` : act.action.log ? '<button class="btn primary" type="button" data-log>Log a payment</button>' : `<a class="btn primary" href="${act.action.href}">${esc(act.action.label)}</a>` : ''}</div>
       </section>
+      ${st.hasBank ? `<section class="card glass rise" aria-label="Cash runway">
+        <div class="card-h"><h2>Cash runway</h2><span class="muted small">${ymLabel(start)} – ${ymLabel(st.normal.horizonEnd - 1)}</span></div>
+        <div class="legend">${legend([{ name: 'Cash as planned', color: 'var(--accent)' }, { name: 'Bad stretch (extras paused)', color: 'var(--warn)' }, { name: 'Cushion', color: 'var(--crit)' }, ...((data.checkins || []).length ? [{ name: 'Real check-ins', color: 'var(--ink)' }] : [])])}</div>
+        <div class="chartbox" data-runway></div>
+      </section>` : ''}
       ${move ? `<section class="card glass move rise" aria-label="Could save more">
         <div class="card-h" style="margin:0"><span class="spark" aria-hidden="true"><svg class="i"><use href="#i-spark"/></svg></span><span class="badge warn">Could save more</span></div>
         <h3>${esc(move.title)}</h3>
@@ -108,5 +114,7 @@ export function renderToday(view, ctx) {
     const dismissed = { [monthKey]: [...keys] }; // keep only this month; older months no longer matter
     save({ ...data, plan: { ...plan, dismissed } }, `${cb.checked ? 'Checked off' : 'Reopened'}: ${t.text.replace(/\*\*/g, '').slice(0, 80)}`, cb.checked ? 'Checked off' : 'Reopened');
   }));
-  return {};
+  const box = view.querySelector('[data-runway]');
+  const redraw = box ? runwayChart(box, { stability: st, checkins: data.checkins || [], start }) : null;
+  return { redraw };
 }

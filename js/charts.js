@@ -202,4 +202,108 @@ export function cashflowBars(box, months, { grad = null } = {}) {
   draw(); return { draw, legend: SER };
 }
 
+// A y-scale that can go below zero, with gridlines at nice steps on both sides.
+function signedScale(lo, hi, H, P) {
+  const top = niceMax(Math.max(1, hi) * 1.05), bot = lo < 0 ? niceMax(-lo * 1.05) : 0;
+  return { top, bot, Y: v => P.t + (top - v) / (top + bot) * (H - P.t - P.b) };
+}
+const pathOf = (pts, X, Y, key) => pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.m).toFixed(1)},${Y(p[key]).toFixed(1)}`).join('');
+
+// Today: cash month by month (the plan), a bad-stretch line, the cushion, planned costs, and real check-ins.
+export function runwayChart(box, { stability: st, checkins = [], start }) {
+  const n = st.normal.view, b = st.bad.view;
+  if (!n.length) { box.innerHTML = ''; return () => {}; }
+  const pts = [{ m: start, cash: st.cash, bad: st.cash, target: st.target, planned: [] },
+    // bad stretch: lower income and higher costs, with extra still going out only when the cushion allows
+    ...n.map((x, i) => ({ m: x.m + 1, cash: x.cash, bad: b[i] ? b[i].cash : x.cash, target: x.target, x, planned: st.normal.upcoming.filter(p => p.month === `${Math.floor(x.m / 12)}-${String(x.m % 12 + 1).padStart(2, '0')}`) }))];
+  const real = checkins.map(c => { const [y, mo, d] = c.date.split('-').map(Number); return { m: y * 12 + mo - 1 + (d - 1) / 30, v: c.real }; }).filter(p => p.m >= start - 3);
+  const draw = () => {
+    const W = Math.max(280, box.clientWidth || 600), H = W < 560 ? 200 : 240, P = { l: 48, r: 10, t: 14, b: 24 };
+    const m0 = Math.min(start, ...real.map(p => Math.floor(p.m))), m1 = pts[pts.length - 1].m;
+    const all = [...pts.flatMap(p => [p.cash, p.bad, p.target]), ...real.map(p => p.v)];
+    const { top, bot, Y } = signedScale(Math.min(0, ...all), Math.max(...all), H, P);
+    const X = m => P.l + (m - m0) / Math.max(1, m1 - m0) * (W - P.l - P.r);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Projected bank cash with your cushion"><defs><linearGradient id="rwf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--accent);stop-opacity:.3"/><stop offset="1" style="stop-color:var(--accent);stop-opacity:0"/></linearGradient></defs>`;
+    s += gridY(top, Y, W, P, bot);
+    for (let m = m0; m <= m1; m += Math.max(1, Math.round((m1 - m0) / 6))) s += `<text x="${X(m)}" y="${H - 6}" text-anchor="middle">${short(m)}</text>`;
+    // the gap between the plan and a bad stretch, then the plan's cash as a filled area
+    s += `<path d="${pathOf(pts, X, Y, 'cash')}${[...pts].reverse().map(p => `L${X(p.m).toFixed(1)},${Y(p.bad).toFixed(1)}`).join('')}Z" style="fill:var(--warn);opacity:.13"/>`;
+    s += `<path d="${pathOf(pts, X, Y, 'cash')}L${X(m1)},${Y(0)}L${X(start)},${Y(0)}Z" fill="url(#rwf)"/>`;
+    s += `<path d="${pts.map((p, i) => `${i ? 'H' + X(p.m).toFixed(1) + 'V' : 'M' + X(p.m).toFixed(1) + ','}${Y(p.target).toFixed(1)}`).join('')}" fill="none" style="stroke:var(--crit)" stroke-width="1.6" stroke-dasharray="5 4"/>`;
+    s += `<path d="${pathOf(pts, X, Y, 'bad')}" fill="none" style="stroke:var(--warn)" stroke-width="1.8" stroke-dasharray="2 4" stroke-linecap="round"/>`;
+    s += `<path d="${pathOf(pts, X, Y, 'cash')}" fill="none" style="stroke:var(--accent)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+    // planned costs: a dotted line and the amount near the top (names are in the readout); close labels alternate rows
+    let lastX = -Infinity, row = 0;
+    for (const p of pts) if (p.planned.length) {
+      const x = X(p.m), amt = p.planned.reduce((t, q) => t + (+q.amount || 0), 0);
+      row = x - lastX < 40 ? 1 - row : 0; lastX = x;
+      s += `<line x1="${x}" x2="${x}" y1="${P.t}" y2="${H - P.b}" style="stroke:var(--ink-3)" stroke-dasharray="1 3"/><text x="${x + 4}" y="${P.t + 8 + row * 12}" style="font-weight:650">−${kfmt(amt)}</text>`;
+    }
+    const low = pts.reduce((a, p) => p.cash - p.target < a.cash - a.target ? p : a, pts[0]);
+    s += `<circle cx="${X(low.m)}" cy="${Y(low.cash)}" r="5" style="fill:${low.cash < low.target - 0.5 ? 'var(--crit)' : 'var(--accent)'};stroke:var(--glass-strong)" stroke-width="2"/>`;
+    for (const p of real) s += `<circle cx="${X(p.m)}" cy="${Y(p.v)}" r="4.5" style="fill:var(--glass-strong);stroke:var(--ink)" stroke-width="2"/>`;
+    box.innerHTML = s + `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(0)}" y2="${Y(0)}" style="stroke:var(--ink-3)"/></svg>`;
+    hover(box, { W, P, H, count: pts.length, xAt: i => X(pts[i].m), html: i => {
+      const p = pts[i], x = p.x;
+      return `<span class="muted">${i ? `End of ${ymLabel(p.m - 1)}` : 'Now'}</span>${tipRow('Cash as planned', money(p.cash), 'var(--accent)')}${tipRow('Bad stretch', money(p.bad), 'var(--warn)')}${tipRow('Cushion', money(p.target), 'var(--crit)')}
+        ${x ? `${tipRow('Came in', `+${money(x.income)}`)}${tipRow('Costs', `−${money(x.costs + x.oneTime)}`)}${x.mins + x.send > 0.5 ? tipRow('To loans', `−${money(x.mins + x.send)}`) : ''}` : ''}${p.planned.map(q => tipRow(q.label, `−${money(+q.amount)}`)).join('')}`;
+    } });
+  };
+  draw(); return draw;
+}
+
+// Spending: what you really spent and earned each month next to the plan (outlined bars and tick marks are the plan).
+export function actualPlanBars(box, months) {
+  const draw = () => {
+    if (!months.length) { box.innerHTML = ''; return; }
+    const W = Math.max(280, box.clientWidth || 600), H = 190, P = { l: 48, r: 8, t: 12, b: 24 };
+    const top = niceMax(Math.max(1, ...months.flatMap(d => [d.in, d.spent, d.planIn, d.planSpent])) * 1.05);
+    const slot = (W - P.l - P.r) / Math.max(months.length, 3), bw = Math.min(26, slot / 2.8), Y = v => P.t + (1 - v / top) * (H - P.t - P.b);
+    const cx = i => P.l + slot * (i + 0.5);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Actual spending and income against the plan">` + gridY(top, Y, W, P);
+    months.forEach((d, i) => {
+      const x = cx(i);
+      s += `<rect x="${x - bw - 2}" y="${Y(d.planSpent)}" width="${bw}" height="${Y(0) - Y(d.planSpent)}" fill="none" style="stroke:var(--ink-3)" stroke-dasharray="3 3" rx="3"/>`;
+      s += `<rect x="${x - bw - 2}" y="${Y(d.spent)}" width="${bw}" height="${Y(0) - Y(d.spent)}" style="fill:${d.spent > d.planSpent + 1 && !d.partial ? 'var(--crit)' : 'var(--s1)'}" rx="3"/>`;
+      s += `<rect x="${x + 2}" y="${Y(d.in)}" width="${bw}" height="${Y(0) - Y(d.in)}" style="fill:var(--good)" rx="3"/>`;
+      s += `<line x1="${x + 2}" x2="${x + 2 + bw}" y1="${Y(d.planIn)}" y2="${Y(d.planIn)}" style="stroke:var(--ink)" stroke-width="2"/>`;
+      const [yy, mm] = d.month.split('-').map(Number);
+      s += `<text x="${x}" y="${H - 6}" text-anchor="middle">${short(yy * 12 + mm - 1)}${d.partial ? '*' : ''}</text>`;
+    });
+    box.innerHTML = s + `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(0)}" y2="${Y(0)}" style="stroke:var(--ink-3)"/></svg>`;
+    hover(box, { W, P, H, count: months.length, xAt: cx, html: i => {
+      const d = months[i], [yy, mm] = d.month.split('-').map(Number);
+      return `<span class="muted">${ymLabel(yy * 12 + mm - 1)}${d.partial ? ' so far' : ''}</span>${tipRow('Spent', money(d.spent), 'var(--s1)')}${tipRow('Plan', money(d.planSpent))}${tipRow('Came in', money(d.in), 'var(--good)')}${tipRow('Plan', money(d.planIn))}
+        ${d.loans > 0.5 ? tipRow('Loan payments', money(d.loans)) : ''}${d.planned > 0.5 ? tipRow('Planned costs', money(d.planned)) : ''}`;
+    } });
+  };
+  draw(); return draw;
+}
+
+// Wealth: net worth climbing and total owed falling. Solid = real, dashed = projected.
+export function netWorthChart(box, { past, future, payoffM }) {
+  const draw = () => {
+    const W = Math.max(280, box.clientWidth || 600), H = W < 560 ? 200 : 240, P = { l: 52, r: 10, t: 14, b: 24 };
+    const pts = [...past, ...future], m0 = pts[0].m, m1 = pts[pts.length - 1].m;
+    const { top, bot, Y } = signedScale(Math.min(0, ...pts.map(p => p.net)), Math.max(...pts.map(p => Math.max(p.owed, p.net))), H, P);
+    const X = m => P.l + (m - m0) / Math.max(1, m1 - m0) * (W - P.l - P.r);
+    const proj = [past[past.length - 1], ...future];
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Net worth and total owed over time">` + gridY(top, Y, W, P, bot) + yearTicks(m0, m1, X, H);
+    s += `<path d="${pathOf(proj, X, Y, 'owed')}" fill="none" style="stroke:var(--s2)" stroke-width="2.2" stroke-dasharray="6 5"/>`;
+    s += `<path d="${pathOf(proj, X, Y, 'net')}" fill="none" style="stroke:var(--accent)" stroke-width="2.6" stroke-dasharray="6 5"/>`;
+    if (past.length > 1) s += `<path d="${pathOf(past, X, Y, 'owed')}" fill="none" style="stroke:var(--s2)" stroke-width="3"/><path d="${pathOf(past, X, Y, 'net')}" fill="none" style="stroke:var(--accent)" stroke-width="3.2"/>`;
+    const now = past[past.length - 1];
+    s += `<circle cx="${X(now.m)}" cy="${Y(now.net)}" r="5" style="fill:var(--accent);stroke:var(--glass-strong)" stroke-width="2"/><circle cx="${X(now.m)}" cy="${Y(now.owed)}" r="5" style="fill:var(--s2);stroke:var(--glass-strong)" stroke-width="2"/>`;
+    const cross = future.find(p => p.net >= 0);
+    if (cross && now.net < 0) s += `<circle cx="${X(cross.m)}" cy="${Y(0)}" r="5" style="fill:var(--good);stroke:var(--glass-strong)" stroke-width="2"/><text x="${X(cross.m)}" y="${Y(0) - 9}" text-anchor="middle" style="fill:var(--ink);font-weight:650">$0 · ${short(cross.m)}</text>`;
+    if (payoffM != null) s += `<text x="${Math.min(W - P.r, X(payoffM + 1))}" y="${Y(0) + 15}" text-anchor="end">Debt-free ${short(payoffM)}</text>`;
+    box.innerHTML = s + `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(0)}" y2="${Y(0)}" style="stroke:var(--ink-3)"/></svg>`;
+    hover(box, { W, P, H, count: pts.length, xAt: i => X(pts[i].m), html: i => {
+      const p = pts[i];
+      return `<span class="muted">${i < past.length ? (p.real ? (i === past.length - 1 ? 'Now' : `End of ${ymLabel(p.m)}`) : '') : `Start of ${ymLabel(p.m)} · projected`}</span>${tipRow('Net worth', money(p.net), 'var(--accent)')}${tipRow('Owed on loans', money(p.owed), 'var(--s2)')}${tipRow('Assets', money(p.assets))}`;
+    } });
+  };
+  draw(); return draw;
+}
+
 export { short as shortMonth };
