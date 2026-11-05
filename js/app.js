@@ -137,7 +137,7 @@ function syncInfo() {
     case STATUS.PENDING: return ['Saving soon…', 'pending'];
     case STATUS.OFFLINE: return ['Offline · will save later', 'warn'];
     case STATUS.LOCAL: return ['Only on this device', 'warn'];
-    case STATUS.CONFLICT: return ['Changed on another device', 'crit'];
+    case STATUS.CONFLICT: return ['Needs your choice: changed on another device', 'crit'];
     case STATUS.ERROR: return [s.error?.code === 'auth' ? 'Key not accepted · fix in Settings' : 'Couldn’t save · tap for details', 'crit'];
     default: return ['Loading…', 'pending'];
   }
@@ -264,7 +264,7 @@ document.querySelector('[data-quick]').addEventListener('click', () => {
 conflictEl.addEventListener('click', async e => {
   const b = e.target.closest('[data-resolve]'); if (!b) return;
   await state.sync.resolve(b.dataset.resolve); reloadData(); render();
-  toast(b.dataset.resolve === 'theirs' ? 'Loaded the latest version from GitHub' : 'Saved this device’s version to GitHub');
+  toast(b.dataset.resolve === 'theirs' ? 'Loaded the other device’s version' : 'Combined both versions and saved');
 });
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
@@ -272,7 +272,16 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 view.innerHTML = '<section class="card glass empty"><h2>Opening your planner…</h2></section>';
 const SQL = await initSqlJs({ locateFile: f => SQL_CDN + f });
 const remote = state.config.token ? new GitHubFile(state.config) : null;
-state.sync = new Sync({ SQL, remote, cache, onChange: () => paintSync() });
+// After a merge with another device's changes, show the combined data and say so (and what both changed, if anything).
+const onSync = s => {
+  paintSync();
+  if (s.lastMerge && s.lastMerge !== state.shownMerge && s.status === STATUS.SAVED) {
+    state.shownMerge = s.lastMerge;
+    if (state.data) { reloadData(); render(); }
+    toast(s.lastMerge.clashes.length ? `Combined with another device’s changes; both changed ${s.lastMerge.clashes.length} item${s.lastMerge.clashes.length > 1 ? 's' : ''}, kept this device’s` : 'Combined with changes from another device');
+  }
+};
+state.sync = new Sync({ SQL, remote, cache, onChange: onSync });
 await state.sync.start();
 state.data = normalize(state.sync.data());
 

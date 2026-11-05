@@ -9,7 +9,7 @@ export function renderSettings(view, ctx) {
   const connected = !!config.token;
   const statusLine = !connected ? 'Not connected. Your planner is only saved on this device.'
     : sync.status === 'saved' ? `Connected to ${config.owner}/${config.repo}. Last saved ${ago(sync.savedAt) || 'just now'}.`
-    : sync.status === 'conflict' ? 'Your planner changed on another device. Choose which version to keep on the Today screen.'
+    : sync.status === 'conflict' ? 'Your planner changed on another device and couldn’t be combined automatically. Choose on the Today screen.'
     : sync.error ? sync.error.message : `Connected to ${config.owner}/${config.repo}.`;
   view.innerHTML = `
     ${header({ title: 'Settings', back: true })}

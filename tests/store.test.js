@@ -123,24 +123,53 @@ test('several quick edits become one commit', async () => {
   eq(remote.commits.length, 1); ok(remote.commits[0].startsWith('Extra set to $300 (+1 more change)'), remote.commits[0]);
 });
 
-test('a save based on an old copy stops with a conflict instead of overwriting', async () => {
+test('two devices editing different things: both edits are kept', async () => {
   const remote = new FakeRemote(), a = device(remote); await a.start(); a.commit(sample(), 'init'); await a.flush();
   const b = device(remote); await b.start();
   const da = a.data(); da.plan.extraMonthly = 111; a.commit(da, 'A edit'); await a.flush();
-  const db_ = b.data(); db_.plan.extraMonthly = 222; b.commit(db_, 'B edit'); await b.flush();
-  eq(b.status, STATUS.CONFLICT); eq(remote.commits.length, 2, 'B did not overwrite;');
-  await b.resolve('theirs');
-  eq(b.status, STATUS.SAVED); eq(b.data().plan.extraMonthly, 111);
+  const db_ = b.data(); db_.plan.share = 40; b.commit(db_, 'B edit'); await b.flush();
+  eq(b.status, STATUS.SAVED); eq(remote.commits.length, 3);
+  ok(remote.commits[2].includes('Merged with changes from another device'), remote.commits[2]);
+  const c = device(remote); await c.start();
+  eq(c.data().plan.extraMonthly, 111, 'A kept;'); eq(c.data().plan.share, 40, 'B kept;');
 });
 
-test('keeping this device’s version saves it on top of the newer one', async () => {
+test('both devices changed the same thing: this device wins and the commit says so', async () => {
   const remote = new FakeRemote(), a = device(remote); await a.start(); a.commit(sample(), 'init'); await a.flush();
   const b = device(remote); await b.start();
   const da = a.data(); da.plan.extraMonthly = 111; a.commit(da, 'A edit'); await a.flush();
   const db_ = b.data(); db_.plan.extraMonthly = 222; b.commit(db_, 'B edit'); await b.flush();
-  await b.resolve('mine');
-  eq(b.status, STATUS.SAVED); eq(remote.commits.length, 3);
   const c = device(remote); await c.start(); eq(c.data().plan.extraMonthly, 222);
+  ok(/kept this device’s: Setting extraMonthly/.test(remote.commits[2]), remote.commits[2]);
+});
+
+test('a stale device can no longer wipe newer additions (the Nov 5 incident)', async () => {
+  const remote = new FakeRemote(), cacheB = memCache();
+  const a = device(remote); await a.start(); a.commit(sample(), 'init'); await a.flush();
+  const b = device(remote, cacheB); await b.start();
+  // A (another computer) adds budgets, a recurring bill, a planned cost and a future loan
+  const da = a.data();
+  da.plan.spendBudgets = { Housing: 750, Food: 150 }; da.plan.expenses[0].amount = 1000;
+  da.recurring = [{ id: 'rent', label: 'Rent', dir: 'out', amount: 750, cadence: 'monthly-last', anchor: '2026-11-01', category: 'Housing', variable: false, active: true }];
+  da.plan.planned = [{ id: 'fall', label: 'Fall semester', amount: 3000, month: '2027-08', paidOn: '', estimate: true }];
+  da.loans.push({ ...da.loans[1], id: 'future', name: 'Spring Sub (est.)', disburseMonth: '2027-01', estimate: true });
+  a.commit(da, 'A adds Phase 4'); await a.flush();
+  // B, offline on the old copy, changes something else and later comes back
+  remote.offline = true; const db_ = b.data(); db_.loans[0].rate = 8.5; b.commit(db_, 'B rate change'); await b.flush(); remote.offline = false;
+  const b2 = device(remote, cacheB); await b2.start();
+  eq(b2.status, STATUS.SAVED);
+  const c = device(remote); await c.start(); const d = c.data();
+  eq(d.recurring.length, 1); eq(d.plan.planned.length, 1); eq(d.loans.length, 3); eq(d.plan.spendBudgets.Housing, 750);
+  eq(d.plan.expenses[0].amount, 1000); eq(d.loans.find(l => l.id === 'a').rate, 8.5, 'and B’s own change is in too;');
+});
+
+test('a delete on one device is kept unless the other edited that item', async () => {
+  const remote = new FakeRemote(), a = device(remote); await a.start(); a.commit(sample(), 'init'); await a.flush();
+  const b = device(remote); await b.start();
+  const da = a.data(); da.payments = []; a.commit(da, 'A deleted the payment'); await a.flush();
+  const db_ = b.data(); db_.plan.share = 60; b.commit(db_, 'B edit'); await b.flush();
+  const c = device(remote); await c.start();
+  eq(c.data().payments.length, 0); eq(c.data().plan.share, 60);
 });
 
 test('edits made offline are kept and saved once back online', async () => {
@@ -153,14 +182,15 @@ test('edits made offline are kept and saved once back online', async () => {
   eq(reopened.status, STATUS.SAVED); eq(remote.commits.length, 2); eq(remote.commits[1], 'Share 50%');
 });
 
-test('unsaved edits on a stale copy are not pushed over newer GitHub data', async () => {
+test('unsaved edits on a stale copy are merged into newer GitHub data, not pushed over it', async () => {
   const remote = new FakeRemote(), cacheB = memCache();
   const a = device(remote); await a.start(); a.commit(sample(), 'init'); await a.flush();
   const b = device(remote, cacheB); await b.start();
   remote.offline = true; const db_ = b.data(); db_.plan.share = 10; b.commit(db_, 'B offline edit'); await b.flush(); remote.offline = false;
   const da = a.data(); da.plan.share = 70; a.commit(da, 'A edit'); await a.flush();
   const b2 = device(remote, cacheB); await b2.start();
-  eq(b2.status, STATUS.CONFLICT); eq(remote.commits.length, 2);
+  eq(b2.status, STATUS.SAVED); eq(remote.commits.length, 3, 'merged instead of overwriting;');
+  const c = device(remote); await c.start(); eq(c.data().plan.share, 10, 'both changed share: this device wins');
 });
 
 test('planned costs and future loans survive a save and reload', () => {
