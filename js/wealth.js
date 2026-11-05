@@ -1,7 +1,7 @@
 // Wealth math: net worth, emergency fund, the recommended "best route" for loans, and the next-dollar ranking.
 // Pure functions over { loans, plan, accounts }. These are rule-based comparisons with the reasoning shown, not personal advice.
-import { ym, ymStr, ymLabel, nowYM, simulate, cashFlow, owedNow, STRATEGIES } from './engine.js';
-import { ledger, monthSummary } from './tracker.js';
+import { ym, ymStr, ymLabel, nowYM, simulate, cashFlow, owedNow, toMonthly, STRATEGIES } from './engine.js';
+import { ledger, monthSummary, balances } from './tracker.js';
 
 export const SAVINGS_LUMP = 'Savings above your emergency fund';
 
@@ -59,11 +59,19 @@ export function outlook(data, start = nowYM(), { bad = false, sends = null, lump
   const end = Math.min(start + 240, Math.max(start + 13, lastPlanned + 2, (mins.payoffM ?? start + 240) + 2));
   const share = plan.share == null || plan.share === '' ? 100 : +plan.share;
   const cash0 = bankCash(data) - lump;
+  // This month, money that moved on or before the last confirmed balance is already in it: only count the rest.
+  const asOf = balances(data).asOf, thisMonth = ymStr(start);
+  const before = asOf && asOf.startsWith(thisMonth) ? monthSummary(data, thisMonth).entries.filter(e => e.date <= asOf) : [];
+  const done0 = { in: before.filter(e => e.dir === 'in').reduce((t, e) => t + e.amount, 0),
+    out: before.filter(e => e.dir === 'out' && e.source === 'log').reduce((t, e) => t + e.amount, 0),
+    loans: before.filter(e => e.source === 'payment').reduce((t, e) => t + e.amount, 0) };
   const months = [];
   let base = cash0;
   for (let m = start; m < end; m++) {
     const cf = cashFlow(plan, m), row = mins.rows.find(x => x.m === m);
-    const income = cf.income * inMul, costs = cf.costs * costMul, oneTime = cf.oneTime + (m === start ? overdue : 0), due = row ? row.paid : 0;
+    const first = m === start;
+    const income = Math.max(0, cf.income * inMul - (first ? done0.in : 0)), costs = Math.max(0, cf.costs * costMul - (first ? done0.out : 0));
+    const oneTime = cf.oneTime + (first ? overdue : 0), due = row ? Math.max(0, row.paid - (first ? done0.loans : 0)) : 0;
     const avail = Math.max(0, (income - costs - oneTime) * share / 100 - due) + Math.max(0, +plan.extraMonthly || 0);
     base += income - costs - oneTime - due; // cash if no extra is ever sent
     months.push({ m, income, costs, oneTime, mins: due, avail, cashIfSaved: base, target: cushionAt(plan, m).target });
@@ -156,7 +164,10 @@ export function monthAction(data, start = nowYM()) {
   const target = loans.filter(l => extraOn(l.id) > 0.5).sort((a, b) => extraOn(b.id) - extraOn(a.id))[0] || null;
   // planned costs that matter now: the ones up to the lowest point (later ones don't explain today's advice)
   const lowM = Math.max(start, st.level === 'tight' ? st.normal.lowSaved.m : st.level === 'watch' ? st.bad.lowSaved.m : o.horizonEnd);
-  const due = o.upcoming.filter(p => ym(p.month) <= lowM).map(p => `${p.label} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`);
+  const dueItems = o.upcoming.filter(p => ym(p.month) <= lowM);
+  const due = dueItems.length > 2 // more than two reads as a list; summarize it
+    ? [`${dueItems.length} planned costs through ${ymLabel(ym(dueItems[dueItems.length - 1].month))} (${money(dueItems.reduce((t, p) => t + (+p.amount || 0), 0))})`]
+    : dueItems.map(p => `${p.label} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`);
   const left = now ? now.income - now.costs - now.oneTime : 0, kept = now ? Math.max(0, now.avail - now.send) : 0;
   const out = { pay, mins, safe: st.safe, level: st.level, stability: st, focusLoanId: target?.id || null, kept };
 
@@ -164,7 +175,7 @@ export function monthAction(data, start = nowYM()) {
     detail: `Add your bank balance on Wealth so the app can check your cushion${(plan.planned || []).some(p => !p.paidOn) ? ' and your planned costs' : ''} before suggesting anything extra.`, action: { label: 'Add balance', href: '#accounts' } };
 
   const sendLine = pay < 0.5 ? 'Nothing is due on your loans this month.' : `Send ${money(pay)} this month${mins > 0.5 ? ` (${money(mins)} is due)` : ''}.`;
-  const keepLine = kept > 0.5 ? ` Keep ${money(kept)} of the ${money(Math.max(0, left))} left over in savings${due.length ? ` for ${due.join(', ')}` : ''} so your ${money(st.target)} cushion holds.` : '';
+  const keepLine = kept > 0.5 ? ` Keep ${kept >= left - 0.5 ? `this month’s ${money(kept)} left over` : `${money(kept)} of the ${money(Math.max(0, left))} left over`} in savings${due.length ? ` for ${due.join(', ')}` : ''} so your ${money(st.target)} cushion holds.` : '';
   if (st.level === 'stable' && st.safe > 0 && !plan.useSpareCash) return { ...out, kind: 'safe-extra',
     title: `Safe to pay ${money(st.safe)} extra on ${target?.name || 'your loans'}`,
     detail: `${sendLine} On top of that, ${money(st.safe)} of savings is safe: even in a bad stretch (income −20%, costs +15%) you keep your ${money(st.target)} cushion${due.length ? ` and cover ${due.join(', ')}` : ''} through ${ymLabel(o.horizonEnd - 1)}.`,
@@ -218,6 +229,47 @@ export function mergeRobinhood(accounts = [], snap) {
 const money = n => (n < -0.004 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
 const owedOf = l => owedNow(l);
 const pctTxt = r => `${(+r).toFixed(2).replace(/\.?0+$/, '')}%`;
+
+// The budget forecast: bank cash at the end of every month, starting from your last real balance plus what you've logged
+// since. This month only counts what's still to come (plan minus what already happened); later months follow the
+// cushion-first projection. Each month carries its line items (income sources, budgets, planned costs, loans).
+export function forecast(data, start = nowYM()) {
+  const plan = data.plan || {}, st = stability(data, start), n = st.normal.months, bd = st.bad.months, h = st.habits;
+  const bal = balances(data), s = monthSummary(data, ymStr(start));
+  // The projection already left out this month's money from before the last check-in; here we start from real + logged
+  // since, so also leave out what was logged after it.
+  const since = s.entries.filter(e => !(bal.asOf && bal.asOf.startsWith(ymStr(start)) && e.date <= bal.asOf));
+  const inSoFar = since.filter(e => e.dir === 'in').reduce((t, e) => t + e.amount, 0);
+  const spentSoFar = since.filter(e => e.dir === 'out' && e.source === 'log').reduce((t, e) => t + e.amount, 0);
+  const loansSoFar = since.filter(e => e.source === 'payment').reduce((t, e) => t + e.amount, 0);
+  const all = { in: s.in, out: s.entries.filter(e => e.dir === 'out' && e.source === 'log').reduce((t, e) => t + e.amount, 0), loans: s.entries.filter(e => e.source === 'payment').reduce((t, e) => t + e.amount, 0) };
+  const budgets = Object.entries(plan.spendBudgets || {}).filter(([, v]) => +v > 0), btotal = budgets.reduce((t, [, v]) => t + +v, 0);
+  const linesFor = (x, i) => {
+    const cf = cashFlow(plan, x.m);
+    const costs = btotal > 0 && Math.abs(cf.costs - btotal) < 1 ? budgets.map(([k, v]) => ({ label: k, amount: +v * h.costsRatio }))
+      : cf.exp.map(e => ({ label: e.label || 'Monthly costs', amount: (+e.amount || 0) * h.costsRatio }));
+    return {
+      income: cf.inc.map(e => ({ label: e.label || 'Income', amount: toMonthly(e) * h.incomeRatio })),
+      costs, planned: i === 0 ? (st.normal.upcoming.filter(p => ym(p.month) <= x.m)).map(p => ({ label: p.label, amount: +p.amount, estimate: p.estimate }))
+        : cf.planned.map(p => ({ label: p.label, amount: +p.amount, estimate: p.estimate })),
+      loans: [...(x.mins > 0.5 ? [{ label: 'Loan payments due', amount: x.mins }] : []), ...(x.send > 0.5 ? [{ label: 'Extra to loans (cushion-first)', amount: x.send }] : [])],
+    };
+  };
+  let end = bal.estimated, badEnd = bal.estimated;
+  const rows = n.map((x, i) => {
+    const b = bd[i] || x, first = i === 0;
+    // this month: only what hasn't happened yet
+    const inc = first ? Math.max(0, x.income - inSoFar) : x.income, out = first ? Math.max(0, x.costs - spentSoFar) : x.costs;
+    const loans = first ? Math.max(0, x.mins + x.send - loansSoFar) : x.mins + x.send;
+    const startBal = end;
+    end += inc - out - x.oneTime - loans;
+    badEnd += (first ? Math.max(0, b.income - inSoFar) : b.income) - (first ? Math.max(0, b.costs - spentSoFar) : b.costs) - b.oneTime - (first ? Math.max(0, b.mins + b.send - loansSoFar) : b.mins + b.send);
+    return { m: x.m, startBal, in: inc, out, oneTime: x.oneTime, loans, end, badEnd, target: x.target, partial: first, soFar: first ? all : null, lines: linesFor(x, i) };
+  });
+  const r = simulate(data.loans || [], effectivePlan(data, start), validStrategy(plan), { start });
+  return { rows, startBal: bal.estimated, real: bal.real, asOf: bal.asOf, loggedSince: { in: bal.inSince, out: bal.outSince }, hasBank: bal.hasBank,
+    gradM: ym(plan.gradMonth), payoffM: r.payoffM, habits: h, level: st.level };
+}
 
 // Net worth and total owed over time: real month-end points from account history (loan balances rebuilt from logged
 // principal), then a projection to payoff: cash from the cushion-first outlook, investments growing at the assumed

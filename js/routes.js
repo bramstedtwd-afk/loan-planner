@@ -6,6 +6,7 @@ export const ROUTES = {
   plan: { tab: 'plan', title: 'Plan' },
   wealth: { tab: 'wealth', title: 'Wealth' },
   spending: { tab: 'wealth', title: 'Spending' },
+  forecast: { tab: 'wealth', title: 'Forecast' },
   checkin: { tab: 'wealth', title: 'Update balances' }, // opens Spending with the balance check-in; the Sunday reminder links here
   accounts: { tab: 'wealth', title: 'Accounts' },
   cashflow: { tab: 'wealth', title: 'Money plan' },

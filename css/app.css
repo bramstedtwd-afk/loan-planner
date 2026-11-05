@@ -277,6 +277,22 @@ details.card[open] > summary { margin-bottom: 12px; }
 
 /* quick actions sheet */
 .qa { display: grid; gap: 8px; }
+/* Forecast */
+.fc-pick { display: grid; grid-template-columns: minmax(130px, 40%) 1fr; gap: 14px; align-items: end; margin: 14px 0 10px; }
+.fc-pick select { width: 100%; }
+.fc-big { display: block; font-size: clamp(26px, 7vw, 34px); font-weight: 750; letter-spacing: -0.03em; color: var(--accent); }
+.fc-big.crit, .fc-row .crit { color: var(--crit); }
+.fc-head, .fc-row > summary { display: grid; grid-template-columns: 1.1fr 1fr 1fr 1fr; gap: 6px; align-items: center; }
+.fc-head { font-size: 11.5px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; padding: 0 0 6px; }
+.fc-head span:not(:first-child), .fc-row > summary > :not(:first-child) { text-align: right; }
+.fc-row { border-top: 1px solid var(--hairline); }
+.fc-row > summary { cursor: pointer; list-style: none; padding: 10px 0; font-size: 13.5px; }
+.fc-row > summary::-webkit-details-marker { display: none; }
+.fc-row[open] > summary { font-weight: 650; }
+.fc-row .pos { color: var(--good); }
+.fc-detail { padding: 2px 0 12px; display: grid; gap: 4px; }
+.fc-detail .kv { font-size: 13px; }
+@media (max-width: 460px) { .subnav .seg { overflow-x: auto; scrollbar-width: none; } .subnav .seg a { flex: none; padding: 9px 10px; } }
 /* Money plan timeline */
 .tl-group { margin-top: 12px; }
 .tl-group > summary { cursor: pointer; list-style: none; font-size: 12.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); padding: 6px 0; }

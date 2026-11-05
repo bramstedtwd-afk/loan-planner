@@ -1,6 +1,6 @@
 // Wealth math tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood, cushion, monthAction, stability, cushionAt, habits, outlook, netWorthSeries } from '../js/wealth.js';
+import { netWorth, emergencyFund, recommendRoute, nextDollar, spareCash, effectivePlan, mergeRobinhood, cushion, monthAction, stability, cushionAt, habits, outlook, netWorthSeries, forecast } from '../js/wealth.js';
 import { defaultPlan, ym, simulate } from '../js/engine.js';
 
 const START = ym('2026-10');
@@ -211,4 +211,31 @@ test('net worth series: real month-ends from history, then a projection where ow
   const last = s.future[s.future.length - 1];
   eq(last.owed, 0); ok(last.net > s.past[2].net, 'net worth grows');
   ok(s.future.some(p => p.owed < 14900 / 2), 'owed falls');
+});
+
+test('forecast: starts from the real balance plus logs, counts only what is left this month, then follows the plan', () => {
+  const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), payments: [],
+    accounts: [{ ...acct('c', 'bank', 6000), updatedAt: '2026-10-01', history: [] }],
+    transactions: [{ id: 't1', date: '2026-10-05', amount: 500, dir: 'out', category: 'Food', kind: 'logged' }, { id: 't2', date: '2026-10-06', amount: 900, dir: 'in', category: 'Paycheck', kind: 'logged' }] };
+  const f = forecast(d, START);
+  eq(f.startBal, 6400, 'real 6,000 − 500 + 900;');
+  const oct = f.rows[0];
+  eq(oct.in, 1100, '2,000 planned − 900 already in;'); eq(oct.out, 700, '1,200 planned − 500 already spent;');
+  near(oct.end, 6400 + 1100 - 700 - oct.loans, 1e-6);
+  const jan = f.rows.find(x => x.m === ym('2027-01'));
+  eq(jan.oneTime, 3000); ok(jan.lines.planned.some(p => p.label === 'Spring tuition'));
+  near(f.rows[1].startBal, oct.end, 1e-6);
+  ok(f.rows.every(x => x.badEnd <= x.end + 1e-6 || x.m > START), 'the bad stretch never ends a month higher at first');
+  ok(f.rows.length >= 12);
+});
+
+test('spending already inside the confirmed balance is not counted again this month', () => {
+  const d = { loans: loans(), plan: plan({ planned: [tuition('2027-01')] }), payments: [],
+    accounts: [{ ...acct('c', 'bank', 5000), updatedAt: '2026-10-10', history: [] }],
+    transactions: [{ id: 'u', date: '2026-10-10', amount: 300, dir: 'out', category: 'Unlogged', kind: 'unlogged' }, { id: 'f', date: '2026-10-12', amount: 100, dir: 'out', category: 'Food', kind: 'logged' }] };
+  const o = outlook(d, START);
+  eq(o.months[0].costs, 900, '1,200 planned − 300 already in the Oct 10 balance;');
+  const f = forecast(d, START);
+  eq(f.startBal, 4900); eq(f.rows[0].out, 800, 'and the forecast also leaves out the $100 logged after it;');
+  near(f.rows[0].end, stability(d, START).normal.months[0].cash, 1e-6, 'forecast and verdict agree on the month end;');
 });

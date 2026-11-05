@@ -20,5 +20,5 @@ test('sub-views belong to their tab; Settings to no tab', () => {
 test('empty or unknown links open Today', () => {
   eq(resolveRoute('').key, 'today'); eq(resolveRoute('#').key, 'today');
   eq(resolveRoute('#nope').key, 'today'); eq(resolveRoute(undefined).key, 'today');
-  eq(Object.keys(ROUTES).length, 10);
+  eq(Object.keys(ROUTES).length, 11);
 });

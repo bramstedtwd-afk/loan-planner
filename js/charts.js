@@ -252,6 +252,38 @@ export function runwayChart(box, { stability: st, checkins = [], start }) {
   draw(); return draw;
 }
 
+// Forecast: month-end bank cash from your last real balance, a bad-stretch line, the cushion, planned costs,
+// and the month you picked. Tapping a month picks it.
+export function forecastChart(box, { rows, startBal, start, picked, onPick }) {
+  const pts = [{ m: start, cash: startBal, bad: startBal, target: rows[0]?.target ?? 0, now: true }, ...rows.map(x => ({ m: x.m + 1, cash: x.end, bad: x.badEnd, target: x.target, row: x }))];
+  const draw = () => {
+    if (!rows.length) { box.innerHTML = ''; return; }
+    const W = Math.max(280, box.clientWidth || 600), H = W < 560 ? 220 : 270, P = { l: 50, r: 10, t: 16, b: 24 };
+    const m0 = pts[0].m, m1 = pts[pts.length - 1].m, all = pts.flatMap(p => [p.cash, p.bad, p.target]);
+    const { top, bot, Y } = signedScale(Math.min(0, ...all), Math.max(...all), H, P);
+    const X = m => P.l + (m - m0) / Math.max(1, m1 - m0) * (W - P.l - P.r);
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Forecast bank cash by month"><defs><linearGradient id="fcf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--accent);stop-opacity:.28"/><stop offset="1" style="stop-color:var(--accent);stop-opacity:0"/></linearGradient></defs>`;
+    s += gridY(top, Y, W, P, bot);
+    const step = Math.max(1, Math.round((m1 - m0) / (W < 560 ? 4 : 7)));
+    for (let m = m0; m <= m1; m += step) s += `<text x="${X(m)}" y="${H - 6}" text-anchor="middle">${short(m)}</text>`;
+    s += `<path d="${pathOf(pts, X, Y, 'cash')}${[...pts].reverse().map(p => `L${X(p.m).toFixed(1)},${Y(p.bad).toFixed(1)}`).join('')}Z" style="fill:var(--warn);opacity:.12"/>`;
+    s += `<path d="${pathOf(pts, X, Y, 'cash')}L${X(m1)},${Y(0)}L${X(m0)},${Y(0)}Z" fill="url(#fcf)"/>`;
+    s += `<path d="${pts.map((p, i) => `${i ? 'H' + X(p.m).toFixed(1) + 'V' : 'M' + X(p.m).toFixed(1) + ','}${Y(p.target).toFixed(1)}`).join('')}" fill="none" style="stroke:var(--crit)" stroke-width="1.6" stroke-dasharray="5 4"/>`;
+    s += `<path d="${pathOf(pts, X, Y, 'bad')}" fill="none" style="stroke:var(--warn)" stroke-width="1.8" stroke-dasharray="2 4" stroke-linecap="round"/>`;
+    s += `<path d="${pathOf(pts, X, Y, 'cash')}" fill="none" style="stroke:var(--accent)" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+    for (const p of pts) if (p.row?.oneTime > 0.5) s += `<line x1="${X(p.m)}" x2="${X(p.m)}" y1="${P.t}" y2="${H - P.b}" style="stroke:var(--ink-3)" stroke-dasharray="1 3"/>`;
+    for (const p of pts) if (!p.now) s += `<circle cx="${X(p.m)}" cy="${Y(p.cash)}" r="${p.row.m === picked ? 6.5 : 2.6}" style="fill:${p.cash < p.target - 0.5 ? 'var(--crit)' : 'var(--accent)'};stroke:var(--glass-strong)" stroke-width="${p.row.m === picked ? 2.5 : 1}"/>`;
+    s += `<circle cx="${X(m0)}" cy="${Y(startBal)}" r="4.5" style="fill:var(--glass-strong);stroke:var(--ink)" stroke-width="2"/>`;
+    box.innerHTML = s + `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(0)}" y2="${Y(0)}" style="stroke:var(--ink-3)"/></svg>`;
+    hover(box, { W, P, H, count: pts.length, xAt: i => X(pts[i].m), onClick: i => pts[i].row && onPick(pts[i].row.m), html: i => {
+      const p = pts[i];
+      if (p.now) return `<span class="muted">Today</span>${tipRow('Real + logged since', money(p.cash), 'var(--ink)')}`;
+      return `<span class="muted">End of ${ymLabel(p.row.m)}</span>${tipRow('Forecast', money(p.cash), 'var(--accent)')}${tipRow('Bad stretch', money(p.bad), 'var(--warn)')}${tipRow('Cushion', money(p.target), 'var(--crit)')}<span class="muted small">Tap to see this month</span>`;
+    } });
+  };
+  draw(); return draw;
+}
+
 // Spending: what you really spent and earned each month next to the plan (outlined bars and tick marks are the plan).
 export function actualPlanBars(box, months) {
   const draw = () => {

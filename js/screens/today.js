@@ -63,7 +63,7 @@ export function renderToday(view, ctx) {
         <div class="actions" style="margin-top:14px">${act.action ? act.action.prefill ? `<button class="btn primary" type="button" data-prefill>${esc(act.action.label)}</button>` : act.action.log ? '<button class="btn primary" type="button" data-log>Log a payment</button>' : `<a class="btn primary" href="${act.action.href}">${esc(act.action.label)}</a>` : ''}</div>
       </section>
       ${st.hasBank ? `<section class="card glass rise" aria-label="Cash runway">
-        <div class="card-h"><h2>Cash runway</h2><span class="muted small">${ymLabel(start)} – ${ymLabel(st.normal.horizonEnd - 1)}</span></div>
+        <div class="card-h"><h2>Cash runway</h2><a class="btn soft" href="#forecast" style="height:32px;font-size:13px">Full forecast</a></div>
         <div class="legend">${legend([{ name: 'Cash as planned', color: 'var(--accent)' }, { name: 'Bad stretch (extras paused)', color: 'var(--warn)' }, { name: 'Cushion', color: 'var(--crit)' }, ...((data.checkins || []).length ? [{ name: 'Real check-ins', color: 'var(--ink)' }] : [])])}</div>
         <div class="chartbox" data-runway></div>
       </section>` : ''}

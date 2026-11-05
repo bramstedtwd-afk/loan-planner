@@ -13,6 +13,7 @@ import { renderMoney } from './screens/money.js';
 import { renderLoans } from './screens/loans.js';
 import { renderWealth } from './screens/wealth.js';
 import { renderSpending } from './screens/spending.js';
+import { renderForecast } from './screens/forecast.js';
 import { openLogMoney } from './ui/log-money.js';
 import { openLogPayment } from './ui/log-payment.js';
 import { openQuickActions } from './ui/quick-actions.js';
@@ -219,6 +220,8 @@ const SCREENS = {
   accounts: { render: v => renderWealth(v, { data: state.data, start, save, robinhood: rhCtx() }, 'accounts') },
   cashflow: { render: v => renderMoney(v, { data: state.data, start, save, filter: state.planFilter, onFilter: f => { state.planFilter = f; render(); } }) },
   spending: { render: v => renderSpending(v, spendCtx(), { month: state.spendMonth }) },
+  forecast: { render: v => renderForecast(v, { data: state.data, start, range: state.fcRange, pick: state.fcPick,
+    onRange: r => { state.fcRange = r; state.fcPick = null; render(); }, onPick: m => { state.fcPick = m; render(); } }) },
   // The Sunday reminder links here: show Spending and open the check-in once (the address becomes #spending so it doesn't reopen).
   checkin: { render: v => { history.replaceState(null, '', '#spending'); return renderSpending(v, spendCtx(), { month: state.spendMonth, openCheck: true }); } },
   loans: { render: v => { const c = compute(); return renderLoans(v, { data: state.data, result: c.results[c.strategy], start, colorOf, save, onLogPayment: logPayment }); } },
