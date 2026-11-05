@@ -1,5 +1,5 @@
 // Wealth: what you have, what you owe, and where the next dollar should go.
-// Overview (net worth, emergency fund, next dollar) and Accounts (balances you keep up to date). Cash flow lives in money.js.
+// Overview (net worth, emergency fund, next dollar) and Accounts (balances you keep up to date). Money plan (cash flow and every planned item) lives in money.js.
 import { netWorth, emergencyFund, nextDollar, cushion, netWorthSeries, ACCOUNT_KINDS } from '../wealth.js';
 import { netWorthChart, legend } from '../charts.js';
 import { ym, ymLabel } from '../engine.js';
@@ -8,7 +8,7 @@ import { header, subnav } from '../ui/layout.js';
 import { makeEditors } from '../ui/editors.js';
 import { formSheet } from '../ui/form-sheet.js';
 
-export const WEALTH_TABS = [['wealth', 'Overview'], ['spending', 'Spending'], ['accounts', 'Accounts'], ['cashflow', 'Cash flow']];
+export const WEALTH_TABS = [['wealth', 'Overview'], ['spending', 'Spending'], ['accounts', 'Accounts'], ['cashflow', 'Money plan']];
 const GROUP_ORDER = ['bank', 'brokerage', 'retirement', 'debt'];
 const daysOld = d => d ? Math.floor((Date.now() - new Date(d + 'T12:00')) / 864e5) : null;
 

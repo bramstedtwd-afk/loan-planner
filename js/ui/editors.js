@@ -1,7 +1,8 @@
 // Add/edit sheets for income, monthly costs, planned one-time costs and one-time payments. Shared by the Wealth screen and the + quick actions.
-import { ym, ymStr, ymLabel, toMonthly } from '../engine.js';
+import { ym, ymStr, ymLabel, toMonthly, activeIn } from '../engine.js';
 import { money, todayISO } from '../format.js';
 import { formSheet } from './form-sheet.js';
+import { openSheet } from './sheet.js';
 import { ACCOUNT_KINDS } from '../wealth.js';
 import { applyCheckin } from '../tracker.js';
 
@@ -101,16 +102,77 @@ export function makeEditors({ data, save, start }) {
         { name: 'label', label: 'What is it', value: s.label, required: true, maxlength: 50, placeholder: 'Spring semester' },
         { name: 'amount', label: 'Amount', type: 'number', value: s.amount, prefix: '$', min: 1, step: 1, required: true, half: true },
         { name: 'month', label: 'Due', type: 'month', value: s.month, required: true, half: true },
+        { name: 'estimate', label: 'How sure', type: 'segmented', value: s.estimate ? 'est' : 'ok', options: [['ok', 'Confirmed'], ['est', 'Estimate']] },
       ],
       submitLabel: isNew ? 'Add' : 'Save',
       onSubmit: v => {
-        const item = { ...s, id: s.id || `c${Date.now().toString(36)}`, label: v.label, amount: +v.amount, month: v.month, paidOn: s.paidOn || '' };
+        const item = { ...s, id: s.id || `c${Date.now().toString(36)}`, label: v.label, amount: +v.amount, month: v.month, paidOn: s.paidOn || '', estimate: v.estimate === 'est' };
         const list = isNew ? [...planned, item] : planned.map((x, k) => k === i ? item : x);
         setList('planned', list, `${isNew ? 'Planned' : 'Updated'}: ${item.label} ${money(item.amount)} in ${ymLabel(ym(item.month))}`, `${item.label} ${isNew ? 'planned' : 'saved'}`);
       },
       onDelete: isNew ? null : () => setList('planned', planned.filter((_, k) => k !== i), `Removed planned cost: ${s.label}`, `${s.label} removed`),
     });
   };
+  // budgets: the four monthly budgets are the current monthly costs, so saving them updates the costs the plan uses
+  const BUDGET_CATS = ['Housing', 'Personal monthly', 'Food', 'Fun'];
+  const editBudgets = () => {
+    const b = plan.spendBudgets || {}, nowIdx = plan.expenses.findIndex(x => activeIn(x, start));
+    formSheet({
+      title: 'Monthly budgets',
+      intro: `These add up to your monthly costs${nowIdx >= 0 ? ` (“${plan.expenses[nowIdx].label}”)` : ''}, so changing one updates the plan, verdict and charts.`,
+      fields: BUDGET_CATS.map(c => ({ name: c, label: c, type: 'number', value: b[c] ?? '', prefix: '$', min: 0, step: 5, half: true })),
+      footer: '<p class="split" data-total></p>',
+      onInput: (v, sheet) => { sheet.querySelector('[data-total]').innerHTML = `Total <b>${money(BUDGET_CATS.reduce((s, c) => s + (+v[c] || 0), 0))}</b> a month`; },
+      submitLabel: 'Save budgets',
+      onSubmit: v => {
+        const spendBudgets = Object.fromEntries(BUDGET_CATS.map(c => [c, +v[c] || 0])), total = Object.values(spendBudgets).reduce((s, x) => s + x, 0);
+        const expenses = nowIdx >= 0 ? plan.expenses.map((x, k) => k === nowIdx ? { ...x, amount: total } : x) : plan.expenses;
+        const cats = plan.categories || { out: [], in: [] };
+        const out = [...new Set([...BUDGET_CATS.filter(c => spendBudgets[c] > 0), ...cats.out])];
+        save({ ...data, plan: { ...plan, spendBudgets, expenses, categories: { ...cats, out } } }, `Budgets: ${BUDGET_CATS.map(c => `${c} ${money(spendBudgets[c])}`).join(', ')} = ${money(total)}/mo`, `Budgets saved · ${money(total)} a month`);
+      },
+    });
+  };
+
+  // recurring entries: the paycheck and rent that come due on their own and need one tap to confirm
+  const recurring = data.recurring || [];
+  const CAD = [['biweekly', 'Every 2 weeks'], ['monthly-last', 'Last day of month'], ['monthly', 'Same day monthly'], ['weekly', 'Weekly']];
+  const editRecurring = (i, preset = { dir: 'out', cadence: 'monthly-last', anchor: todayISO(), amount: '', label: '', category: '' }) => {
+    const isNew = i == null, r = isNew ? preset : recurring[i], cats = plan.categories || { out: ['Other'], in: ['Other'] };
+    formSheet({
+      title: isNew ? 'Add a recurring entry' : `Edit ${r.label}`,
+      intro: 'When it comes due, Spending shows it so you confirm it with one tap (or change the amount, or skip it).',
+      fields: [
+        { name: 'label', label: 'Name', value: r.label, required: true, maxlength: 40, placeholder: 'Rent' },
+        { name: 'dir', label: 'Money', type: 'segmented', value: r.dir, options: [['out', 'Out'], ['in', 'In']] },
+        { name: 'amount', label: 'Usual amount', type: 'number', value: r.amount, prefix: '$', min: 0, step: 0.01, required: true, half: true },
+        { name: 'category', label: 'Category', type: 'select', value: r.category, options: [...new Set([...cats.out, ...cats.in, r.category].filter(Boolean))].map(c => [c, c]), half: true },
+        { name: 'cadence', label: 'How often', type: 'select', value: r.cadence, options: CAD, half: true },
+        { name: 'anchor', label: 'First (or next) date', type: 'date', value: r.anchor, required: true, half: true },
+        { name: 'variable', label: 'Amount', type: 'segmented', value: r.variable ? 'varies' : 'fixed', options: [['fixed', 'Fixed'], ['varies', 'Varies: ask me each time']] },
+        ...(isNew ? [] : [{ name: 'active', label: 'Status', type: 'segmented', value: r.active === false ? 'off' : 'on', options: [['on', 'Active'], ['off', 'Stopped']] }]),
+      ],
+      submitLabel: isNew ? 'Add' : 'Save',
+      onSubmit: v => {
+        const item = { ...r, id: r.id || `rc${Date.now().toString(36)}`, label: v.label, dir: v.dir, amount: +v.amount, category: v.category, cadence: v.cadence, anchor: v.anchor, variable: v.variable === 'varies', active: v.active !== 'off' };
+        const list = isNew ? [...recurring, item] : recurring.map((x, k) => k === i ? item : x);
+        save({ ...data, recurring: list }, `${isNew ? 'Added' : 'Updated'} recurring: ${item.label} ${money(item.amount)}`, `${item.label} ${isNew ? 'added' : 'saved'}`);
+      },
+      onDelete: isNew ? null : () => save({ ...data, recurring: recurring.filter((_, k) => k !== i) }, `Removed recurring: ${r.label}`, `${r.label} removed`),
+    });
+  };
+
+  // one Add button for the whole money plan
+  const addAnything = () => openSheet(`<div class="form"><h2>Add to your money plan</h2><div class="qa">${[
+    ['inc', 'Income', 'A job, internship or other pay'], ['exp', 'Monthly costs', 'For a stretch of months'], ['rec', 'Recurring entry', 'Paycheck, rent or a bill to confirm when due'],
+    ['planned', 'Planned cost', 'Tuition or anything due in a known month'], ['loan', 'Future loan', 'A loan you expect to take'], ['lump', 'One-time payment', 'Refund or gift toward loans'],
+  ].map(([k, t, sub]) => `<button type="button" data-add-kind="${k}"><span><b>${t}</b><small>${sub}</small></span></button>`).join('')}</div></div>`, {
+    label: 'Add to your money plan',
+    onOpen: (sheet, close) => sheet.querySelectorAll('[data-add-kind]').forEach(b => b.addEventListener('click', () => { close(); setTimeout(() => ({
+      inc: () => editIncome(null), exp: () => editCost(null), rec: () => editRecurring(null), planned: () => editPlanned(null), lump: () => editLump(null), loan: () => { location.hash = '#loans'; },
+    })[b.dataset.addKind](), 190); })),
+  });
+
   // Paying it: record the date. It shows in Spending and lowers the estimated balance; the real one waits for the check-in.
   const markPlannedPaid = i => {
     const s = planned[i];
@@ -194,5 +256,5 @@ export function makeEditors({ data, save, start }) {
     });
   };
 
-  return { editIncome, editCost, editLump, editPlanned, markPlannedPaid, editAccount, updateBalance, pickAccountToUpdate, INC_PRESETS, COST_PRESETS };
+  return { editIncome, editCost, editLump, editPlanned, markPlannedPaid, editBudgets, editRecurring, addAnything, editAccount, updateBalance, pickAccountToUpdate, INC_PRESETS, COST_PRESETS };
 }

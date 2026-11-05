@@ -277,6 +277,24 @@ details.card[open] > summary { margin-bottom: 12px; }
 
 /* quick actions sheet */
 .qa { display: grid; gap: 8px; }
+/* Money plan timeline */
+.tl-group { margin-top: 12px; }
+.tl-group > summary { cursor: pointer; list-style: none; font-size: 12.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); padding: 6px 0; }
+.tl-group > summary::-webkit-details-marker { display: none; }
+.tl-group > summary::before { content: '▾ '; }
+.tl-group:not([open]) > summary::before { content: '▸ '; }
+.tl-row .name b { white-space: normal; }
+/* recurring due cards and budgets on Spending */
+.due { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--hairline); }
+.due:first-of-type { border-top: 0; }
+.due .name { flex: 1; min-width: 0; }
+.due .name b { display: block; font-size: 14.5px; }
+.due .name small { color: var(--ink-3); font-size: 12.5px; }
+.due input { width: 92px; height: 36px; border-radius: 10px; border: 1px solid var(--hairline); background: var(--glass-strong); color: var(--ink); padding: 0 8px; font: inherit; text-align: right; }
+.due .btn { height: 36px; padding: 0 12px; font-size: 13px; }
+.bud { display: grid; grid-template-columns: minmax(90px, 32%) 1fr auto; gap: 10px; align-items: center; font-size: 13.5px; margin-top: 8px; }
+.bud span { color: var(--ink-2); }
+.bud small { color: var(--ink-3); }
 .qa button { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 14px; border-radius: 16px; background: var(--glass-strong); border: 1px solid var(--hairline); transition: border-color .15s, transform .1s; }
 .qa button:hover { border-color: var(--accent); }
 .qa button:active { transform: scale(0.99); }

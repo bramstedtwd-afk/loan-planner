@@ -45,12 +45,21 @@ const MIGRATIONS = [
      note TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'logged', created_at TEXT NOT NULL DEFAULT '');
    CREATE TABLE checkins (
      date TEXT PRIMARY KEY, real REAL NOT NULL, estimated REAL NOT NULL, unlogged REAL NOT NULL DEFAULT 0, taken_at TEXT NOT NULL DEFAULT '');`,
+  // v5: estimates (placeholders you confirm later), recurring entries (paycheck, rent) and which logged entry confirmed which due date.
+  `ALTER TABLE planned_costs ADD COLUMN estimate INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE loans ADD COLUMN estimate INTEGER NOT NULL DEFAULT 0;
+   ALTER TABLE transactions ADD COLUMN recurring_id TEXT NOT NULL DEFAULT '';
+   ALTER TABLE transactions ADD COLUMN due TEXT NOT NULL DEFAULT '';
+   CREATE TABLE recurring (
+     id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', dir TEXT NOT NULL DEFAULT 'out', amount REAL NOT NULL DEFAULT 0,
+     cadence TEXT NOT NULL DEFAULT 'monthly', anchor TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT '',
+     variable INTEGER NOT NULL DEFAULT 0, active INTEGER NOT NULL DEFAULT 1, sort INTEGER NOT NULL DEFAULT 0);`,
 ];
 export const DB_VERSION = MIGRATIONS.length;
 export const MIGRATIONS_FOR_TESTS = MIGRATIONS;
 
 // Plan fields kept as JSON in `settings`; list fields live in their own tables.
-const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder', 'emergencyMonths', 'assumedReturn', 'employerMatch', 'strategyOverride', 'dismissed', 'useSpareCash', 'categories', 'emergencyStarter'];
+const SETTING_KEYS = ['strategy', 'autopay', 'extraMonthly', 'gradMonth', 'share', 'refi', 'customOrder', 'emergencyMonths', 'assumedReturn', 'employerMatch', 'strategyOverride', 'dismissed', 'useSpareCash', 'categories', 'emergencyStarter', 'spendBudgets'];
 
 const rowsOf = (db, sql, params) => {
   const st = db.prepare(sql); if (params) st.bind(params);
@@ -88,7 +97,7 @@ export function readAll(db) {
   const loans = rowsOf(db, 'SELECT * FROM loans ORDER BY sort, name').map(r => ({
     id: r.id, name: r.name, servicer: r.servicer, kind: r.kind, balance: r.balance, unpaid: r.unpaid, rate: r.rate,
     minPayment: r.min_payment, termMonths: r.term_months, repayStart: r.repay_start, asOf: r.as_of,
-    origBalance: r.orig_balance, order: r.sort, notes: r.notes, disburseMonth: r.disburse_month,
+    origBalance: r.orig_balance, order: r.sort, notes: r.notes, disburseMonth: r.disburse_month, estimate: !!r.estimate,
   }));
   const payments = rowsOf(db, 'SELECT * FROM payments ORDER BY date, created_at').map(r => ({
     id: r.id, loanId: r.loan_id, loanName: r.loan_name, date: r.date, amount: r.amount, interest: r.interest,
@@ -102,7 +111,7 @@ export function readAll(db) {
   plan.incomes = rowsOf(db, 'SELECT * FROM incomes ORDER BY id').map(r => ({ label: r.label, kind: r.kind, amount: r.amount, per: r.per, start: r.start_month, end: r.end_month }));
   plan.expenses = rowsOf(db, 'SELECT * FROM expenses ORDER BY id').map(r => ({ label: r.label, amount: r.amount, start: r.start_month, end: r.end_month }));
   plan.lumps = rowsOf(db, 'SELECT * FROM lumps ORDER BY id').map(r => ({ month: r.month, label: r.label, amount: r.amount }));
-  plan.planned = rowsOf(db, 'SELECT * FROM planned_costs ORDER BY month, sort').map(r => ({ id: r.id, label: r.label, amount: r.amount, month: r.month, paidOn: r.paid_on }));
+  plan.planned = rowsOf(db, 'SELECT * FROM planned_costs ORDER BY month, sort').map(r => ({ id: r.id, label: r.label, amount: r.amount, month: r.month, paidOn: r.paid_on, estimate: !!r.estimate }));
   const history = {};
   for (const h of rowsOf(db, 'SELECT * FROM account_history ORDER BY date')) (history[h.account_id] ||= []).push({ date: h.date, balance: h.balance });
   const accounts = rowsOf(db, 'SELECT * FROM accounts ORDER BY sort, name').map(r => ({
@@ -110,10 +119,13 @@ export function readAll(db) {
     source: r.source, updatedAt: r.updated_at, order: r.sort, notes: r.notes, history: history[r.id] || [],
   }));
   const transactions = rowsOf(db, 'SELECT * FROM transactions ORDER BY date, created_at').map(r => ({
-    id: r.id, date: r.date, amount: r.amount, dir: r.dir, category: r.category, note: r.note, kind: r.kind, createdAt: r.created_at,
+    id: r.id, date: r.date, amount: r.amount, dir: r.dir, category: r.category, note: r.note, kind: r.kind, createdAt: r.created_at, recurringId: r.recurring_id, due: r.due,
   }));
   const checkins = rowsOf(db, 'SELECT * FROM checkins ORDER BY date').map(r => ({ date: r.date, real: r.real, estimated: r.estimated, unlogged: r.unlogged, takenAt: r.taken_at }));
-  return { loans, payments, scenarios, plan, accounts, transactions, checkins };
+  const recurring = rowsOf(db, 'SELECT * FROM recurring ORDER BY sort, label').map(r => ({
+    id: r.id, label: r.label, dir: r.dir, amount: r.amount, cadence: r.cadence, anchor: r.anchor, category: r.category, variable: !!r.variable, active: !!r.active,
+  }));
+  return { loans, payments, scenarios, plan, accounts, transactions, checkins, recurring };
 }
 
 const num = v => (v === '' || v == null || Number.isNaN(+v)) ? 0 : +v;
@@ -124,22 +136,24 @@ export function writeAll(db, data) {
   const plan = migratePlan(data.plan || {});
   db.exec('BEGIN');
   try {
-    for (const t of ['loans', 'payments', 'incomes', 'expenses', 'lumps', 'settings', 'scenarios', 'accounts', 'account_history', 'planned_costs', 'transactions', 'checkins']) db.exec(`DELETE FROM ${t}`);
-    for (const t of data.transactions || []) db.run('INSERT INTO transactions (id, date, amount, dir, category, note, kind, created_at) VALUES (?,?,?,?,?,?,?,?)',
-      [str(t.id), str(t.date), num(t.amount), t.dir === 'in' ? 'in' : 'out', str(t.category), str(t.note), str(t.kind || 'logged'), str(t.createdAt)]);
+    for (const t of ['loans', 'payments', 'incomes', 'expenses', 'lumps', 'settings', 'scenarios', 'accounts', 'account_history', 'planned_costs', 'transactions', 'checkins', 'recurring']) db.exec(`DELETE FROM ${t}`);
+    (data.recurring || []).forEach((r, i) => db.run('INSERT INTO recurring (id, label, dir, amount, cadence, anchor, category, variable, active, sort) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [str(r.id), str(r.label), r.dir === 'in' ? 'in' : 'out', num(r.amount), str(r.cadence || 'monthly'), str(r.anchor), str(r.category), r.variable ? 1 : 0, r.active === false ? 0 : 1, i]));
+    for (const t of data.transactions || []) db.run('INSERT INTO transactions (id, date, amount, dir, category, note, kind, created_at, recurring_id, due) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [str(t.id), str(t.date), num(t.amount), t.dir === 'in' ? 'in' : 'out', str(t.category), str(t.note), str(t.kind || 'logged'), str(t.createdAt), str(t.recurringId), str(t.due)]);
     for (const c of data.checkins || []) db.run('INSERT OR REPLACE INTO checkins (date, real, estimated, unlogged, taken_at) VALUES (?,?,?,?,?)',
       [str(c.date), num(c.real), num(c.estimated), num(c.unlogged), str(c.takenAt)]);
-    (plan.planned || []).forEach((p, i) => db.run('INSERT INTO planned_costs (id, label, amount, month, paid_on, sort) VALUES (?,?,?,?,?,?)',
-      [str(p.id || `c${i}`), str(p.label), num(p.amount), str(p.month), str(p.paidOn), i]));
+    (plan.planned || []).forEach((p, i) => db.run('INSERT INTO planned_costs (id, label, amount, month, paid_on, sort, estimate) VALUES (?,?,?,?,?,?,?)',
+      [str(p.id || `c${i}`), str(p.label), num(p.amount), str(p.month), str(p.paidOn), i, p.estimate ? 1 : 0]));
     (data.accounts || []).forEach((a, i) => {
       db.run('INSERT INTO accounts (id, name, kind, institution, balance, rate, min_payment, source, updated_at, sort, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
         [str(a.id), str(a.name), str(a.kind), str(a.institution), num(a.balance), num(a.rate), num(a.minPayment), str(a.source || 'manual'), str(a.updatedAt), a.order ?? i, str(a.notes)]);
       for (const h of a.history || []) db.run('INSERT OR REPLACE INTO account_history (account_id, date, balance) VALUES (?,?,?)', [str(a.id), str(h.date), num(h.balance)]);
     });
     (data.loans || []).forEach((l, i) => db.run(
-      'INSERT INTO loans (id, name, servicer, kind, balance, unpaid, rate, min_payment, term_months, repay_start, as_of, orig_balance, sort, notes, disburse_month) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO loans (id, name, servicer, kind, balance, unpaid, rate, min_payment, term_months, repay_start, as_of, orig_balance, sort, notes, disburse_month, estimate) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       [str(l.id), str(l.name), str(l.servicer), str(l.kind), num(l.balance), num(l.unpaid), num(l.rate), num(l.minPayment), Math.round(num(l.termMonths)),
-        str(l.repayStart), str(l.asOf), num(l.origBalance) || num(l.balance) + num(l.unpaid), l.order ?? i, str(l.notes), str(l.disburseMonth)]));
+        str(l.repayStart), str(l.asOf), num(l.origBalance) || num(l.balance) + num(l.unpaid), l.order ?? i, str(l.notes), str(l.disburseMonth), l.estimate ? 1 : 0]));
     for (const p of data.payments || []) db.run(
       'INSERT INTO payments (id, loan_id, loan_name, date, amount, interest, principal, note, created_at) VALUES (?,?,?,?,?,?,?,?,?)',
       [str(p.id), str(p.loanId), str(p.loanName), str(p.date), num(p.amount), num(p.interest), num(p.principal), str(p.note), str(p.createdAt)]);

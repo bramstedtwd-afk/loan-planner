@@ -9,8 +9,8 @@ const SQL = () => globalThis.__SQL;
 
 const sample = () => ({
   loans: [
-    { id: 'a', name: 'Lender A · 9%', servicer: 'Lender A', kind: 'private', balance: 9000, unpaid: 400.5, rate: 9, minPayment: 0, termMonths: 180, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 9400.5, order: 1, notes: 'fixed', disburseMonth: '' },
-    { id: 'b', name: 'Direct Sub', servicer: '', kind: 'fed_sub', balance: 3500, unpaid: 0, rate: 6.53, minPayment: 0, termMonths: 0, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 3500, order: 2, notes: '', disburseMonth: '' },
+    { id: 'a', name: 'Lender A · 9%', servicer: 'Lender A', kind: 'private', balance: 9000, unpaid: 400.5, rate: 9, minPayment: 0, termMonths: 180, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 9400.5, order: 1, notes: 'fixed', disburseMonth: '', estimate: false },
+    { id: 'b', name: 'Direct Sub', servicer: '', kind: 'fed_sub', balance: 3500, unpaid: 0, rate: 6.53, minPayment: 0, termMonths: 0, repayStart: '2028-11', asOf: '2026-10-05', origBalance: 3500, order: 2, notes: '', disburseMonth: '', estimate: false },
   ],
   payments: [{ id: 'p1', loanId: 'a', loanName: 'Lender A · 9%', date: '2026-10-20', amount: 200, interest: 30.5, principal: 169.5, note: 'test', createdAt: '2026-10-20T10:00:00Z' }],
   scenarios: [{ id: 's1', name: 'Big raise', plan: { strategy: 'snowball', extraMonthly: 100 }, payoffM: ym('2029-03'), totalInterest: 4100, savedAt: '2026-10-21T00:00:00Z' }],
@@ -165,7 +165,7 @@ test('unsaved edits on a stale copy are not pushed over newer GitHub data', asyn
 
 test('planned costs and future loans survive a save and reload', () => {
   const d = sample();
-  d.plan.planned = [{ id: 'tu', label: 'Spring tuition', amount: 3000, month: '2027-01', paidOn: '' }, { id: 'bk', label: 'Books', amount: 400, month: '2027-01', paidOn: '2027-01-05' }];
+  d.plan.planned = [{ id: 'tu', label: 'Spring tuition', amount: 3000, month: '2027-01', paidOn: '', estimate: true }, { id: 'bk', label: 'Books', amount: 400, month: '2027-01', paidOn: '2027-01-05', estimate: false }];
   d.loans[1].disburseMonth = '2027-01';
   const db = openDb(SQL()); writeAll(db, d);
   const back = readAll(openDb(SQL(), exportBytes(db)));
@@ -174,7 +174,7 @@ test('planned costs and future loans survive a save and reload', () => {
 });
 
 test('logged money and check-ins survive a save and reload', () => {
-  const d = { ...sample(), transactions: [{ id: 't1', date: '2026-11-02', amount: 12.5, dir: 'out', category: 'Food', note: 'lunch', kind: 'logged', createdAt: '2026-11-02T18:00:00Z' }],
+  const d = { ...sample(), transactions: [{ id: 't1', date: '2026-11-02', amount: 12.5, dir: 'out', category: 'Food', note: 'lunch', kind: 'logged', createdAt: '2026-11-02T18:00:00Z', recurringId: '', due: '' }],
     checkins: [{ date: '2026-11-08', real: 2940, estimated: 3090, unlogged: -150, takenAt: '2026-11-08T16:00:00Z' }] };
   d.plan.categories = { out: ['Rent', 'Food'], in: ['Paycheck'] };
   const db = openDb(SQL()); writeAll(db, d);

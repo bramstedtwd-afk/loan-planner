@@ -100,7 +100,7 @@ function normalize(d) {
   const loans = [...(d.loans || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(b.name));
   const accounts = [...(d.accounts || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || String(a.name).localeCompare(b.name));
   return { loans, payments: d.payments || [], scenarios: d.scenarios || [], plan: migratePlan(d.plan || {}), accounts,
-    transactions: d.transactions || [], checkins: d.checkins || [] };
+    transactions: d.transactions || [], checkins: d.checkins || [], recurring: d.recurring || [] };
 }
 const reloadData = () => { state.data = normalize(state.sync.data()); };
 
@@ -217,7 +217,7 @@ const SCREENS = {
   plan: { render: v => state.data.loans.length ? renderPlan(v, { data: state.data, start, colorOf, save }) : emptyState(v, 'Plan') },
   wealth: { render: v => renderWealth(v, { data: state.data, start, save, robinhood: rhCtx() }, 'wealth') },
   accounts: { render: v => renderWealth(v, { data: state.data, start, save, robinhood: rhCtx() }, 'accounts') },
-  cashflow: { render: v => renderMoney(v, { data: state.data, start, save }) },
+  cashflow: { render: v => renderMoney(v, { data: state.data, start, save, filter: state.planFilter, onFilter: f => { state.planFilter = f; render(); } }) },
   spending: { render: v => renderSpending(v, spendCtx(), { month: state.spendMonth }) },
   // The Sunday reminder links here: show Spending and open the check-in once (the address becomes #spending so it doesn't reopen).
   checkin: { render: v => { history.replaceState(null, '', '#spending'); return renderSpending(v, spendCtx(), { month: state.spendMonth, openCheck: true }); } },

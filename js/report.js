@@ -2,7 +2,7 @@
 // Pure function (no I/O) so it runs the same in tests, in the browser and in the monthly GitHub Action.
 import { ym, ymStr, ymLabel, nowYM, migratePlan, simulate, interestMoves, cashFlow, owedNow, STRATEGIES } from './engine.js';
 import { effectivePlan } from './wealth.js';
-import { checkinDue, lastSunday } from './tracker.js';
+import { checkinDue, lastSunday, recurringDue, unexplained } from './tracker.js';
 
 const money = (n, cents = false) => (n < -0.004 ? '−$' : '$') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0 });
 const owedOf = (l, m) => owedNow(l, m);
@@ -93,11 +93,14 @@ export function reminders(data, { now = new Date(), hasHistory = false } = {}) {
   for (const p of (plan.planned || []).filter(p => !p.paidOn && ym(p.month) != null && ym(p.month) - start <= 1)) {
     const pm = ym(p.month);
     out.push({ key: `planned-${p.id}`, text: pm < start
-      ? `**${p.label}** (${money(+p.amount)}) was planned for ${monthName(pm)}. If you paid it, mark it paid in Wealth → Cash flow; if not, move it to the right month.`
-      : `**${p.label}** (${money(+p.amount)}) is due ${pm === start ? 'this month' : `in ${monthName(pm)}`}. Your cushion already holds it; mark it paid in Wealth → Cash flow when you pay.` });
+      ? `**${p.label}** (${money(+p.amount)}) was planned for ${monthName(pm)}. If you paid it, mark it paid in Wealth → Money plan; if not, move it to the right month.`
+      : `**${p.label}** (${money(+p.amount)}) is due ${pm === start ? 'this month' : `in ${monthName(pm)}`}. It’s in your plan; mark it paid in Wealth → Money plan when you pay.` });
   }
   for (const l of loans.filter(l => ym(l.disburseMonth) != null && ym(l.disburseMonth) <= start)) out.push({ key: `arrived-${l.id}`,
     text: `**${l.name}** was planned to arrive in ${monthName(ym(l.disburseMonth))}. Confirm the amount you actually got on the Loans tab.` });
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  for (const x of recurringDue(data, todayStr)) out.unshift({ key: `due-${x.r.id}-${x.due}`, text: `**${x.r.label}** was due ${x.due}. Confirm it in Wealth → Spending (one tap, or enter the real amount).` });
+  for (const u of unexplained(data)) out.unshift({ key: `odd-${u.id}`, text: `**${money(u.amount, true)} unlogged** at the ${u.date} check-in. Explain it in Wealth → Spending so your spending stays honest.` });
   if (checkinDue(data, now)) out.unshift({ key: `checkin-${lastSunday(now)}`, text: '**Sunday check-in:** confirm your bank balance in Wealth → Spending → Update balances, so the estimate and your spending stay honest.' });
   const grad = ym(plan.gradMonth);
   if (grad != null && grad >= start && grad - start <= 1) out.push({ key: 'grad', text: `Graduation is ${grad === start ? 'this month' : 'next month'}. Your grace period starts; review your income and costs in the app.` });

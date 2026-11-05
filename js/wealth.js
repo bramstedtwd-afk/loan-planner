@@ -154,7 +154,9 @@ export function monthAction(data, start = nowYM()) {
   const probe = simulate(loans, { ...plan, budgets: { [ymStr(start)]: 0 }, extraMonthly: 0, lumps: [{ month: ymStr(start), amount: 1 }] }, attack, { start });
   const extraOn = id => (probe.rows[0]?.pay[id] || 0) - Math.min(probe.loans.find(l => l.id === id)?.min || 0, probe.init[id] || 0);
   const target = loans.filter(l => extraOn(l.id) > 0.5).sort((a, b) => extraOn(b.id) - extraOn(a.id))[0] || null;
-  const due = o.upcoming.map(p => `${p.label} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`);
+  // planned costs that matter now: the ones up to the lowest point (later ones don't explain today's advice)
+  const lowM = Math.max(start, st.level === 'tight' ? st.normal.lowSaved.m : st.level === 'watch' ? st.bad.lowSaved.m : o.horizonEnd);
+  const due = o.upcoming.filter(p => ym(p.month) <= lowM).map(p => `${p.label} ${money(+p.amount)} in ${ymLabel(ym(p.month))}`);
   const left = now ? now.income - now.costs - now.oneTime : 0, kept = now ? Math.max(0, now.avail - now.send) : 0;
   const out = { pay, mins, safe: st.safe, level: st.level, stability: st, focusLoanId: target?.id || null, kept };
 

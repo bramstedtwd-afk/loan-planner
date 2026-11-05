@@ -1,6 +1,6 @@
 // Real money tracker tests. Made-up data only.
 import { test, eq, near, ok } from './harness.js';
-import { ledger, balances, monthSummary, applyCheckin, lastSunday, checkinDue, actualVsPlan, UNLOGGED } from '../js/tracker.js';
+import { ledger, balances, monthSummary, applyCheckin, lastSunday, checkinDue, actualVsPlan, UNLOGGED, occurrences, recurringDue, nextDue, confirmRecurring, budgetStatus, budgetTotal, oddThreshold, unexplained, explainGap } from '../js/tracker.js';
 import { defaultPlan } from '../js/engine.js';
 
 const bank = (id, balance, updatedAt) => ({ id, name: id, kind: 'bank', balance, updatedAt, history: [{ date: updatedAt, balance }] });
@@ -67,4 +67,44 @@ test('actual vs plan starts at the first tracked month and keeps loan payments a
   const nov = rows[1];
   eq(nov.spent, 80, 'food only;'); eq(nov.loans, 100); eq(nov.in, 250); eq(nov.planSpent, 700); eq(nov.partial, true);
   eq(actualVsPlan({ accounts: [], plan: {} }, '2026-11', planOf).length, 0);
+});
+
+test('recurring: biweekly paycheck and rent on the last day of each month', () => {
+  const pay = { id: 'pay', label: 'Paycheck', dir: 'in', amount: 480, cadence: 'biweekly', anchor: '2026-11-13', category: 'Paycheck', variable: true };
+  const rent = { id: 'rent', label: 'Rent', dir: 'out', amount: 750, cadence: 'monthly-last', anchor: '2026-11-01', category: 'Housing' };
+  eq(occurrences(pay, '2026-11-01', '2026-12-31').join(), '2026-11-13,2026-11-27,2026-12-11,2026-12-25');
+  eq(occurrences(rent, '2026-11-01', '2027-03-01').join(), '2026-11-30,2026-12-31,2027-01-31,2027-02-28');
+  const d = { ...base(), recurring: [pay, rent] };
+  eq(recurringDue(d, '2026-11-12').length, 0, 'nothing before the first payday;');
+  const due = recurringDue(d, '2026-11-30');
+  eq(due.map(x => `${x.r.id}@${x.due}`).join(), 'pay@2026-11-13,pay@2026-11-27,rent@2026-11-30');
+  const d2 = confirmRecurring(d, pay, '2026-11-13', { amount: 512.4 });
+  const t = d2.transactions.find(x => x.recurringId === 'pay');
+  eq(t.amount, 512.4); eq(t.dir, 'in'); eq(t.category, 'Paycheck'); eq(t.date, '2026-11-13');
+  const d3 = confirmRecurring(d2, rent, '2026-11-30', { skip: true });
+  eq(recurringDue(d3, '2026-11-30').map(x => x.due).join(), '2026-11-27', 'confirmed and skipped ones are gone;');
+  eq(ledger(d3).some(e => e.kind === 'skipped'), false, 'a skip never shows as money;');
+  eq(nextDue(pay, '2026-11-14'), '2026-11-27');
+});
+
+test('budgets: spent, left, and running hot early in the month', () => {
+  const d = base(); d.plan.spendBudgets = { Food: 100, Fun: 50 };
+  const s = budgetStatus(d, '2026-11', '2026-11-10');
+  const food = s.find(x => x.category === 'Food');
+  eq(food.spent, 80); eq(food.left, 20); eq(food.hot, true, '80% spent with a third of the month gone;');
+  eq(budgetStatus(d, '2026-11', '2026-11-28').find(x => x.category === 'Food').hot, false);
+  eq(budgetTotal(d), 150);
+});
+
+test('odd balance: a big gap can be explained by category, the rest stays or is accepted', () => {
+  eq(oddThreshold(240, 230), 75); eq(oddThreshold(2000, 1500), 350);
+  const r = applyCheckin(base(), { chk: 940, sav: 2000 }, '2026-11-08');
+  const u = r.data.transactions.find(t => t.kind === 'unlogged');
+  eq(unexplained(r.data).length, 1);
+  const e1 = explainGap(r.data, u.id, { Food: 60, Fun: 40 });
+  eq(e1.transactions.find(t => t.kind === 'unlogged').amount, 50); eq(e1.transactions.filter(t => t.note === 'Explained at check-in').length, 2);
+  eq(monthSummary(e1, '2026-11').out, monthSummary(r.data, '2026-11').out, 'explaining moves money between categories, never changes the total;');
+  const e2 = explainGap(e1, u.id, {}, { accept: true });
+  eq(unexplained(e2).length, 0); eq(e2.transactions.find(t => t.id === u.id).kind, 'unlogged-ok');
+  eq(balances(e2).estimated, balances(r.data).estimated);
 });

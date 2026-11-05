@@ -8,7 +8,7 @@ export const ROUTES = {
   spending: { tab: 'wealth', title: 'Spending' },
   checkin: { tab: 'wealth', title: 'Update balances' }, // opens Spending with the balance check-in; the Sunday reminder links here
   accounts: { tab: 'wealth', title: 'Accounts' },
-  cashflow: { tab: 'wealth', title: 'Cash flow' },
+  cashflow: { tab: 'wealth', title: 'Money plan' },
   loans: { tab: 'loans', title: 'Loans' },
   activity: { tab: 'loans', title: 'Activity' },
   settings: { tab: null, title: 'Settings' },

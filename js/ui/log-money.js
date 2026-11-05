@@ -2,13 +2,14 @@
 import { money, esc, todayISO } from '../format.js';
 import { openSheet } from './sheet.js';
 import { formSheet } from './form-sheet.js';
-import { balances, applyCheckin, UNLOGGED } from '../tracker.js';
+import { balances, applyCheckin, UNLOGGED, oddThreshold, explainGap, recurringDue } from '../tracker.js';
+import { cashFlow, nowYM, WEEKS_PER_MONTH } from '../engine.js';
 
 // entry: an existing logged transaction to edit, or null for a new one. dir: 'out' or 'in' for a new one.
 export function openLogMoney({ data, save, entry = null, dir = 'out' }) {
   const cats = data.plan.categories || { out: ['Other'], in: ['Other'] };
   const e = entry || { dir, amount: '', category: '', date: todayISO(), note: '' };
-  const isUnlogged = e.kind === 'unlogged';
+  const isUnlogged = String(e.kind || '').startsWith('unlogged');
   const options = d => (cats[d] || []).map(c => `<option ${c === e.category ? 'selected' : ''}>${esc(c)}</option>`).join('');
   openSheet(`
     <form class="form" data-form novalidate>
@@ -85,6 +86,42 @@ export function openCheckin({ data, save }) {
       const r = applyCheckin(data, realById, v.date);
       save(r.data, `Balance check-in ${v.date}: ${money(r.real, true)}${Math.abs(r.gap) >= 0.5 ? ` (unlogged ${r.gap < 0 ? '−' : '+'}${money(Math.abs(r.gap), true)})` : ''}`,
         Math.abs(r.gap) >= 0.5 ? `Balances confirmed · ${money(Math.abs(r.gap), true)} unlogged ${r.gap < 0 ? 'out' : 'in'}` : 'Balances confirmed');
+      // an odd gap asks right away what it was
+      const u = r.data.transactions.find(t => t.kind === 'unlogged' && t.date === v.date);
+      if (u && u.amount >= oddThresholdFor(r.data)) setTimeout(() => openExplain({ data: r.data, save, id: u.id }), 260);
+    },
+  });
+}
+
+// The odd-balance threshold for this plan: $75, or 10% of a typical week's money in and out, whichever is bigger.
+export function oddThresholdFor(data) {
+  const cf = cashFlow(data.plan || {}, nowYM());
+  return oddThreshold(cf.income / WEEKS_PER_MONTH, (cf.costs + cf.oneTime) / WEEKS_PER_MONTH);
+}
+
+// Explain an Unlogged amount: split it into categories. What's left stays Unlogged, or you accept it as is.
+export function openExplain({ data, save, id }) {
+  const u = (data.transactions || []).find(t => t.id === id);
+  if (!u) return;
+  const cats = (data.plan.categories || {})[u.dir] || ['Other'];
+  const due = recurringDue(data, todayISO()).filter(x => x.r.dir === u.dir);
+  formSheet({
+    title: `What was the ${money(u.amount, true)}?`,
+    intro: `Your real balance on ${u.date} was ${money(u.amount, true)} ${u.dir === 'out' ? 'lower' : 'higher'} than the estimate.${due.length ? ` Unconfirmed: ${due.map(x => `${x.r.label} (${x.due})`).join(', ')}; confirm those in Spending if they explain it.` : ''} Split it into what it was; anything you leave stays Unlogged.`,
+    fields: [
+      ...cats.map(c => ({ name: `c_${c}`, label: c, type: 'number', value: '', prefix: '$', min: 0, step: 0.01, half: true })),
+      { name: 'rest', label: 'Whatever’s left', type: 'segmented', value: 'keep', options: [['keep', 'Ask me again'], ['accept', 'It’s fine, keep as Unlogged']] },
+    ],
+    footer: '<p class="split" data-left></p>',
+    onInput: (v, sheet) => {
+      const used = cats.reduce((s, c) => s + (+v[`c_${c}`] || 0), 0);
+      sheet.querySelector('[data-left]').innerHTML = used > u.amount + 0.004 ? `That’s <b>${money(used - u.amount, true)}</b> more than the gap.` : `<b>${money(u.amount - used, true)}</b> left unexplained.`;
+    },
+    submitLabel: 'Save',
+    onSubmit: v => {
+      const splits = Object.fromEntries(cats.map(c => [c, +v[`c_${c}`] || 0]));
+      if (Object.values(splits).reduce((s, x) => s + x, 0) > u.amount + 0.004) return 'The parts add up to more than the gap.';
+      save(explainGap(data, id, splits, { accept: v.rest === 'accept' }), `Explained ${money(u.amount, true)} from the ${u.date} check-in`, 'Saved');
     },
   });
 }

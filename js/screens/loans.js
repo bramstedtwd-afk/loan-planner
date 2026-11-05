@@ -50,7 +50,7 @@ export function renderLoans(view, ctx) {
     const repay = ym(l.repayStart);
     if (isPending(l, start)) return `<button class="row" type="button" data-edit="${esc(l.id)}">
       <span class="dotc" style="background:${colorOf(l.id)}"></span>
-      <div class="name"><b>${esc(l.name)}<span class="tag ${isFed(l.kind) ? 'fed' : ''}">${esc(KINDS[l.kind]?.short || l.kind)}</span><span class="tag">Planned</span></b>
+      <div class="name"><b>${esc(l.name)}<span class="tag ${isFed(l.kind) ? 'fed' : ''}">${esc(KINDS[l.kind]?.short || l.kind)}</span><span class="tag">Planned</span>${l.estimate ? '<span class="tag warn-tag">Estimate</span>' : ''}</b>
         <small>Arrives ${ymLabel(ym(l.disburseMonth))}${l.kind === 'fed_sub' && repay ? ` · no interest until ${ymLabel(repay)}` : ' · interest starts when it arrives'}</small></div>
       <div class="right"><span class="amt num muted">${money(+l.balance || 0)}</span><span class="badge">${pct(l.rate)}</span></div>
       <svg class="i chev" aria-hidden="true"><use href="#i-send"/></svg></button>`;
@@ -136,12 +136,13 @@ export function renderLoans(view, ctx) {
         { name: 'repayStart', label: 'Repayment starts', type: 'month', value: l.repayStart, half: true },
         { name: 'asOf', label: 'Balance as of', type: 'date', value: l.asOf, half: true, required: true },
         { name: 'disburseMonth', label: 'Arrives', hint: 'future loans only', type: 'month', value: future ? l.disburseMonth : '', half: true },
+        ...(future || l.estimate ? [{ name: 'estimate', label: 'How sure', type: 'segmented', value: l.estimate && !arrived ? 'est' : 'ok', options: [['ok', 'Confirmed'], ['est', 'Estimate']] }] : []),
         { name: 'notes', label: 'Notes', value: l.notes, maxlength: 160, placeholder: 'Variable rate, autopay on…' },
       ],
       submitLabel: isNew ? 'Add loan' : 'Save',
       onSubmit: v => {
         if (v.disburseMonth && ym(v.disburseMonth) > start && +v.unpaid > 0) return 'A loan that hasn’t arrived yet can’t have unpaid interest.';
-        const loan = { ...l, ...v, balance: +v.balance || 0, unpaid: +v.unpaid || 0, rate: +v.rate || 0, minPayment: +v.minPayment || 0, termMonths: Math.round(+v.termMonths || 0) };
+        const loan = { ...l, ...v, balance: +v.balance || 0, unpaid: +v.unpaid || 0, rate: +v.rate || 0, minPayment: +v.minPayment || 0, termMonths: Math.round(+v.termMonths || 0), estimate: v.estimate === 'est' };
         if (isNew) { loan.id = `l${Date.now().toString(36)}`; loan.order = Math.max(0, ...data.loans.map(x => x.order ?? 0)) + 1; }
         loan.origBalance = Math.max(+l.origBalance || 0, loan.balance + loan.unpaid);
         const next = { ...data, loans: isNew ? [...data.loans, loan] : data.loans.map(x => x.id === loan.id ? loan : x) };

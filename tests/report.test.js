@@ -1,6 +1,7 @@
 // Monthly check-in tests. Made-up data only.
 import { test, eq, ok } from './harness.js';
 import { monthlyCheckin, reminders } from '../js/report.js';
+import { dailyAlerts } from '../js/alerts.js';
 import { defaultPlan } from '../js/engine.js';
 
 const NOW = new Date('2026-11-01T14:00:00Z');
@@ -75,4 +76,17 @@ test('a Sunday check-in reminder shows once the bank balance is older than the l
   const t = reminders(d, { now: NOW }).find(x => x.key.startsWith('checkin-'));
   ok(t && t.key === 'checkin-2026-11-01', t?.key);
   ok(!reminders({ ...d, accounts: [{ ...d.accounts[0], updatedAt: '2026-11-01' }] }, { now: NOW }).some(x => x.key.startsWith('checkin-')));
+});
+
+test('daily alerts: verdict change, planned cost a week out, unexplained gap, and nothing twice', () => {
+  const d = { ...data(), accounts: [{ id: 'c', name: 'Checking', kind: 'bank', balance: 900, updatedAt: '2026-11-01', history: [] }],
+    transactions: [{ id: 'u1', date: '2026-11-01', amount: 200, dir: 'out', category: 'Unlogged', kind: 'unlogged' }] };
+  d.plan.planned = [{ id: 'tu', label: 'Spring tuition', amount: 3000, month: '2026-12' }];
+  const now = new Date('2026-11-25T15:00:00Z');
+  const first = dailyAlerts(d, { level: 'stable' }, { now });
+  const keys = first.messages.map(m => m.key);
+  ok(keys.some(k => k.startsWith('level-')), keys.join()); ok(keys.includes('planned-tu')); ok(keys.includes('odd-u1'));
+  const again = dailyAlerts(d, first.state, { now: new Date('2026-11-26T15:00:00Z') });
+  eq(again.messages.length, 0, 'nothing repeats the next day;');
+  ok(dailyAlerts(d, again.state, { now: new Date('2026-11-29T15:00:00Z') }).messages.some(m => m.key === 'odd-u1'), 'an unexplained gap is reminded every 3 days');
 });

@@ -1,11 +1,12 @@
 // Spending: real money in and out. Real vs estimated bank balance, this month's totals by category, and every entry.
 import { ym, ymStr, ymLabel, cashFlow } from '../engine.js';
-import { money, esc } from '../format.js';
+import { money, esc, todayISO } from '../format.js';
 import { header, subnav } from '../ui/layout.js';
 import { WEALTH_TABS } from './wealth.js';
-import { balances, monthSummary, ledger, checkinDue, actualVsPlan, UNLOGGED } from '../tracker.js';
+import { balances, monthSummary, ledger, checkinDue, actualVsPlan, UNLOGGED, recurringDue, confirmRecurring, unexplained, budgetStatus } from '../tracker.js';
 import { actualPlanBars, legend } from '../charts.js';
-import { openLogMoney, openCheckin } from '../ui/log-money.js';
+import { openLogMoney, openCheckin, openExplain, oddThresholdFor } from '../ui/log-money.js';
+import { makeEditors } from '../ui/editors.js';
 import { formSheet } from '../ui/form-sheet.js';
 
 const dayLabel = d => new Date(`${d}T12:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -19,7 +20,8 @@ export function renderSpending(view, ctx, { month: shown, openCheck = false } = 
   const maxCat = Math.max(1, ...s.byCategory.map(c => c.amount));
   const days = [...new Set(s.entries.map(e => e.date))];
   const trend = actualVsPlan(data, ymStr(start), k => cashFlow(data.plan, ym(k)), 6);
-  const tagFor = e => e.source === 'payment' ? 'Loan' : e.source === 'planned' ? 'Planned' : e.kind === 'unlogged' ? 'Check-in' : '';
+  const today = todayISO(), dueNow = recurringDue(data, today), odd = unexplained(data, oddThresholdFor(data)), bud = budgetStatus(data, month, today);
+  const tagFor = e => e.source === 'payment' ? 'Loan' : e.source === 'planned' ? 'Planned' : String(e.kind).startsWith('unlogged') ? 'Check-in' : e.recurringId ? 'Recurring' : '';
 
   view.innerHTML = `${header({ title: 'Wealth' })}${subnav(WEALTH_TABS, 'spending', 'Wealth views')}
     ${b.hasBank ? `<section class="card glass rise" aria-label="Bank balance">
@@ -33,6 +35,20 @@ export function renderSpending(view, ctx, { month: shown, openCheck = false } = 
     </section>` : `<section class="card glass rise"><div class="card-h"><h2>Add your bank account</h2></div>
       <p class="muted small" style="margin:0 0 12px">Spending tracking compares what you log with your real bank balance each Sunday. Add checking (and savings) first.</p>
       <div class="add-row"><a class="btn primary" href="#accounts">Add bank account</a></div></section>`}
+
+    ${dueNow.length || odd.length ? `<section class="card glass rise" aria-label="To confirm">
+      <div class="card-h"><h2>To confirm</h2><span class="muted small">${dueNow.length + odd.length}</span></div>
+      ${odd.map(u => `<div class="due"><div class="name"><b>Unlogged ${u.dir === 'out' ? '−' : '+'}${money(u.amount, true)}</b><small>Found at the ${dayLabel(u.date)} check-in. What was it?</small></div><button class="btn primary" type="button" data-explain="${esc(u.id)}">Explain</button></div>`).join('')}
+      ${dueNow.map((x, i) => `<div class="due"><div class="name"><b>${esc(x.r.label)}</b><small>${dayLabel(x.due)}${x.r.variable ? ' · enter the real amount' : ''}</small></div>
+        <input type="number" inputmode="decimal" step="0.01" min="0" value="${(+x.r.amount).toFixed(2)}" data-due-amt="${i}" aria-label="${esc(x.r.label)} amount">
+        <button class="btn primary" type="button" data-due-ok="${i}" aria-label="Confirm ${esc(x.r.label)}">✓</button><button class="btn soft" type="button" data-due-skip="${i}">Skip</button></div>`).join('')}
+    </section>` : ''}
+
+    ${bud.length && month === ymStr(start) ? `<section class="card glass rise" aria-label="Budgets">
+      <div class="card-h"><h2>Budgets</h2><button class="btn soft" type="button" data-budgets style="height:34px;font-size:13px">Edit</button></div>
+      ${bud.map(x => `<div class="bud"><span>${esc(x.category)}</span><div class="bar"><i style="width:${Math.min(100, x.pct * 100).toFixed(1)}%;background:${x.over ? 'var(--crit)' : x.hot ? 'var(--warn)' : 'var(--accent)'}"></i></div><b class="num">${x.over ? `<span style="color:var(--crit)">${money(-x.left)} over</span>` : `${money(x.left)} <small>left</small>`}</b></div>`).join('')}
+      <p class="muted small" style="margin:10px 0 0">${money(bud.reduce((t, x) => t + x.spent, 0))} of ${money(bud.reduce((t, x) => t + x.budget, 0))} spent this month.${bud.some(x => x.hot) ? ` <b style="color:var(--warn)">${bud.filter(x => x.hot).map(x => x.category).join(', ')} running hot.</b>` : ''}</p>
+    </section>` : ''}
 
     <section class="card glass rise" aria-label="Month">
       <div class="card-h"><h2>${new Date(Math.floor(m / 12), m % 12, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</h2>
@@ -66,6 +82,17 @@ export function renderSpending(view, ctx, { month: shown, openCheck = false } = 
       <p class="muted small" style="margin:0"><b>Out:</b> ${esc((data.plan.categories?.out || []).join(', '))}<br><b>In:</b> ${esc((data.plan.categories?.in || []).join(', '))}</p></section>`;
 
   view.querySelector('[data-checkin]')?.addEventListener('click', () => openCheckin({ data, save }));
+  view.querySelectorAll('[data-explain]').forEach(btn => btn.addEventListener('click', () => openExplain({ data, save, id: btn.dataset.explain })));
+  view.querySelectorAll('[data-due-ok]').forEach(btn => btn.addEventListener('click', () => {
+    const x = dueNow[+btn.dataset.dueOk], amount = +view.querySelector(`[data-due-amt="${btn.dataset.dueOk}"]`).value;
+    if (!(amount > 0)) return;
+    save(confirmRecurring(data, x.r, x.due, { amount }), `Confirmed ${x.r.label} ${money(amount, true)} (${x.due})`, `${x.r.label} ${x.r.dir === 'in' ? '+' : '−'}${money(amount, true)} confirmed`);
+  }));
+  view.querySelectorAll('[data-due-skip]').forEach(btn => btn.addEventListener('click', () => {
+    const x = dueNow[+btn.dataset.dueSkip];
+    save(confirmRecurring(data, x.r, x.due, { skip: true }), `Skipped ${x.r.label} (${x.due})`, `${x.r.label} skipped`);
+  }));
+  view.querySelector('[data-budgets]')?.addEventListener('click', () => makeEditors({ data, save, start }).editBudgets());
   view.querySelectorAll('[data-log]').forEach(btn => btn.addEventListener('click', () => openLogMoney({ data, save, dir: btn.dataset.log })));
   view.querySelectorAll('[data-month]').forEach(btn => btn.addEventListener('click', () => onMonth(btn.dataset.month)));
   view.querySelectorAll('[data-entry]').forEach(btn => btn.addEventListener('click', () => {
