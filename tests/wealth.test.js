@@ -239,3 +239,11 @@ test('spending already inside the confirmed balance is not counted again this mo
   eq(f.startBal, 4900); eq(f.rows[0].out, 800, 'and the forecast also leaves out the $100 logged after it;');
   near(f.rows[0].end, stability(d, START).normal.months[0].cash, 1e-6, 'forecast and verdict agree on the month end;');
 });
+
+test('a Robinhood account that disappears from a newer snapshot is removed; manual accounts never are', () => {
+  const first = mergeRobinhood([acct('c', 'bank', 100)], snap('2026-11-05T13:00:00Z', [{ last4: '2885', totalValue: 2375 }, { last4: '7354', retirement: true, type: 'roth_ira', totalValue: 5404 }])).accounts;
+  eq(first.length, 3);
+  const { accounts, changed } = mergeRobinhood(first, snap('2026-11-09T13:00:00Z', [{ last4: '7999', totalValue: 331.32 }]));
+  eq(changed, true); eq(accounts.map(a => a.id).sort().join(), 'c,rh-7999');
+  eq(mergeRobinhood(first, snap('2026-11-01T13:00:00Z', [{ last4: '7999', totalValue: 1 }])).accounts.some(a => a.id === 'rh-2885'), true, 'an older snapshot removes nothing;');
+});

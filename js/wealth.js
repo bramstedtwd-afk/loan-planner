@@ -223,7 +223,11 @@ export function mergeRobinhood(accounts = [], snap) {
     if (ex) Object.assign(ex, acct); else next.push(acct);
     changed = true;
   });
-  return { accounts: next, changed };
+  // A synced account Robinhood no longer reports (closed, or the money moved) goes away once a newer snapshot says so.
+  const seen = new Set(snap.accounts.map(s => RH_PREFIX + String(s.last4 || '').slice(-4)));
+  const kept = next.filter(a => !(a.source === 'robinhood' && String(a.id).startsWith(RH_PREFIX) && !seen.has(a.id) && (a.updatedAt || '') <= date));
+  if (kept.length !== next.length) changed = true;
+  return { accounts: kept, changed };
 }
 
 const money = n => (n < -0.004 ? '−$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-US');
